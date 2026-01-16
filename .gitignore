@@ -1,0 +1,21 @@
+# Build outputs
+Debug/
+Release/
+build/
+
+# CubeIDE metadata
+.metadata/
+*.launch
+
+# Logs
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# VS Code (if you ever open it there)
+.vscode/
+
+# Backup files
+*~
