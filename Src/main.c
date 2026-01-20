@@ -21,6 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <string.h>
+#include "serial.h"
 
 /* USER CODE END Includes */
 
@@ -43,7 +45,7 @@
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+const char msg[] = "Hello World!\r\n";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -100,6 +102,13 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+    // Transmit our msg out uart2
+    HAL_UART_Transmit( &huart2, (uint8_t *)msg, strlen(msg),HAL_MAX_DELAY);
+
+
+    // Pause for 1 second before doing it again
+    HAL_Delay(1000);
   }
   /* USER CODE END 3 */
 }
