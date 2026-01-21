@@ -29,24 +29,17 @@
  * State Variables/Objects Here
  * ------------------------------------------------------------------- */
 
-/* Pointer to the UART instance used by this Serial library.
- * This is set during Serial_begin() and reused by all Serial functions. */
-static UART_HandleTypeDef *serialUart;
+/* ----------------------------------------------------------------------
+ * Serial instance registry
+ *
+ * HAL provides only the UART handle in RX callbacks.
+ * This table allows us to map a UART back to its SerialPort.
+ * --------------------------------------------------------------------- */
 
-/* Temporary single-byte storage used by HAL_UART_Receive_IT().
- * HAL writes the received byte here before the RX-complete callback fires. */
-static uint8_t rx_byte;
+#define MAX_SERIAL_PORTS 4
 
-/* Head index (write position) for the RX ring buffer.
- * Advanced by the interrupt handler. */
-static volatile uint16_t rx_head = 0;
-
-/* Tail index (read position) for the RX ring buffer.
- * Advanced by Serial_read(). */
-static volatile uint16_t rx_tail = 0;
-
-/* Ring buffer storage for received characters. */
-static uint8_t rx_buf[SERIAL_RX_BUF_SIZE];
+static SerialPort *serial_ports[MAX_SERIAL_PORTS];
+static uint8_t serial_port_count = 0;
 
 /* -------------------------------------------------------------------
  * Public Functions Here
@@ -60,30 +53,40 @@ static uint8_t rx_buf[SERIAL_RX_BUF_SIZE];
  *   baud rate override.
  *
  * Inputs:
+ *   sp    - An instance to a serial port struct
  *   huart - Pointer to an already-configured UART_HandleTypeDef
  *   baud  - Desired baud rate, or 0 to keep CubeMX-configured value
  *
  * Outputs:
  *   None
  */
-void Serial_begin(UART_HandleTypeDef *huart, uint32_t baud)
+void Serial_begin(SerialPort *sp, UART_HandleTypeDef *huart, uint32_t baud)
 {
-    /* Store the UART instance for later use by the library */
-    serialUart = huart;
+	/* Initialize instance state */
+	sp->huart   = huart;
+	sp->rx_head = 0;
+	sp->rx_tail = 0;
 
     /* Check if a baud rate has been provided */
-    if (baud > 0)
-    {
-        /* Update the UART configuration with the requested baud rate */
-        serialUart->Init.BaudRate = baud;
+	if (baud > 0)
+	{
+		/* Update the UART configuration with the requested baud rate */
+		sp->huart->Init.BaudRate = baud;
 
-        /* Reinitialize the UART peripheral so the new baud takes effect */
-        HAL_UART_Init(serialUart);
-    }
+		/* Reinitialize the UART peripheral so the new baud takes effect */
+		HAL_UART_Init(sp->huart);
+	}
 
-    /* Start interrupt-driven RX, receiving one byte at a time.
+	 /* Register this SerialPort instance */
+	 if (serial_port_count < MAX_SERIAL_PORTS)
+	 {
+		 serial_ports[serial_port_count++] = sp;
+	 }
+
+     /* Start interrupt-driven RX, receiving one byte at a time.
      * Each completed receive will trigger HAL_UART_RxCpltCallback(). */
-    HAL_UART_Receive_IT(serialUart, &rx_byte, 1);
+
+    HAL_UART_Receive_IT(sp->huart, &sp->rx_byte, 1);
 }
 
 
@@ -94,17 +97,18 @@ void Serial_begin(UART_HandleTypeDef *huart, uint32_t baud)
  *   Transmit a null-terminated string over the serial port.
  *
  * Inputs:
+ *   SerialPort *sp - An instance of a serial port struct, that has already been initialized with _begin
  *   s - Pointer to a null-terminated C string
  *
  * Outputs:
  *   None
  */
-void Serial_print(char *s)
+void Serial_print(SerialPort *sp, char *s)
 {
     /* Transmit the string using a blocking HAL call.
      * This mirrors Arduino Serial.print() behavior. */
     HAL_UART_Transmit(
-        serialUart,
+        sp->huart,
         (uint8_t *)s,
         strlen(s),
         HAL_MAX_DELAY
@@ -119,18 +123,19 @@ void Serial_print(char *s)
  *   Transmit a string followed by CRLF, similar to Arduino Serial.println().
  *
  * Inputs:
+ *   SerialPort *sp - An instance of a serial port struct, that has already been initialized with _begin
  *   s - Pointer to a null-terminated C string
  *
  * Outputs:
  *   None
  */
-void Serial_println(char *s)
+void Serial_println(SerialPort *sp, char *s)
 {
     /* Print the string itself */
-    Serial_print(s);
+    Serial_print(sp, s);
 
     /* Append carriage return and newline for terminal-friendly output */
-    Serial_print("\r\n");
+    Serial_print(sp, "\r\n");
 }
 
 
@@ -145,19 +150,19 @@ void Serial_println(char *s)
  *   Return the number of unread bytes currently available in the RX buffer.
  *
  * Inputs:
- *   None
+ *   SerialPort *sp - An instance of a serial port struct, that has already been initialized with _begin
  *
  * Outputs:
  *   Number of bytes available to read
  */
-int Serial_available(void)
+int Serial_available(SerialPort *sp)
 {
     /* If head has wrapped past tail, compute normally */
-    if (rx_head >= rx_tail)
-        return rx_head - rx_tail;
-    else
+	if (sp->rx_head >= sp->rx_tail)
+		return sp->rx_head - sp->rx_tail;
+	else
         /* Handle wrap-around case */
-        return SERIAL_RX_BUF_SIZE - rx_tail + rx_head;
+	    return SERIAL_RX_BUF_SIZE - sp->rx_tail + sp->rx_head;
 }
 
 
@@ -168,32 +173,44 @@ int Serial_available(void)
  *   Read a single byte from the RX buffer.
  *
  * Inputs:
- *   None
+ *   SerialPort *sp - An instance of a serial port struct, that has already been initialized with _begin
  *
  * Outputs:
  *   The next byte as an int (0-255), or -1 if no data is available
  */
-int Serial_read(void)
+int Serial_read(SerialPort *sp)
 {
+    /* If head equals tail, the buffer is empty */
+    if (sp->rx_head == sp->rx_tail)
+        return -1;
 
+    /* Read the next byte from the buffer */
+    uint8_t c = sp->rx_buf[sp->rx_tail];
+
+    /* Advance the tail index, wrapping if necessary */
+    sp->rx_tail = (sp->rx_tail + 1) % SERIAL_RX_BUF_SIZE;
+
+    return c;
 }
+
 
 
 /* -------------------------------------------------------------------
  * Private Functions Here
  * ----------------------------------------------------------------- */
 
-/* --------------------------------------------------------------------------
- * HAL callback
- * -------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------
+ * Callback Functions Here
+ * ------------------------------------------------------------------ */
+
+
 
 /**
  * HAL_UART_RxCpltCallback
  *
  * Purpose:
  *   HAL callback invoked when a UART receive interrupt completes.
- *   This function stores the received byte into the RX ring buffer
- *   and immediately re-arms the UART for the next byte.
+ *   Routes the received byte to the correct SerialPort instance.
  *
  * Inputs:
  *   huart - Pointer to the UART that triggered the interrupt
@@ -203,30 +220,34 @@ int Serial_read(void)
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    /* Ignore RX events from UARTs not owned by this Serial instance */
-    if (huart != serialUart)
-        return;
-
-    /* Compute the next head position in the ring buffer, wrap around if too big */
-    uint16_t next = (rx_head + 1) % SERIAL_RX_BUF_SIZE;
-
-    /* Only store the byte if the buffer is not full.
-     * If next == rx_tail, the buffer is full and the byte is dropped. */
-    if (next != rx_tail)
+	// Loop through every Serial Port that has been registered
+    for (uint8_t i = 0; i < serial_port_count; i++)
     {
-        /* Store the received byte */
-        rx_buf[rx_head] = rx_byte;
 
-        /* Advance the head index */
-        rx_head = next;
+        SerialPort *sp = serial_ports[i];
+
+        // Check if this serial port is the one that contains the UART that has been triggered.
+        if (sp->huart == huart)
+        {
+        	/* Compute the next head position in the ring buffer, wrap around */
+            uint16_t next = (sp->rx_head + 1) % SERIAL_RX_BUF_SIZE;
+
+            /* Only store the byte if the buffer is not full.
+             * If next == rx_tail, the buffer is full and the byte is dropped. */
+            if (next != sp->rx_tail)
+            {
+            	/* Store the received byte */
+                sp->rx_buf[sp->rx_head] = sp->rx_byte;
+
+                /* Advance the head index */
+                sp->rx_head = next;
+            }
+
+            /* Re-arm the UART receive interrupt for the next byte.
+             * This is critical: without this, only one byte would ever be received. */
+            HAL_UART_Receive_IT(sp->huart, &sp->rx_byte, 1);
+            return;
+        }
     }
-
-    /* Re-arm the UART receive interrupt for the next byte.
-     * This is critical: without this, only one byte would ever be received. */
-    HAL_UART_Receive_IT(serialUart, &rx_byte, 1);
 }
-
-/* --------------------------------------------------------------------
- * Callback Functions Here
- * ------------------------------------------------------------------ */
 
