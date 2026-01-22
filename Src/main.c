@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include "serial.h"
+#include "subc_mkii.h"
 
 /* USER CODE END Includes */
 
