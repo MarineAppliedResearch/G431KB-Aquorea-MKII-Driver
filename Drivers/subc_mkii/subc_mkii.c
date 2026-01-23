@@ -19,10 +19,12 @@
  * -------------------------------------------------------------------------- */
 
 #include "subc_mkii.h"
+#include <stdio.h>
 
 /* --------------------------------------------------------------------------
  * Public Functions
  * -------------------------------------------------------------------------- */
+
 
 /**
  * subc_mkii_init
@@ -36,4 +38,126 @@ void subc_mkii_init(SubcMkII *driver, SerialPort *light_serial)
 
     /* No command is active at initialization */
     driver->command_active = false;
+}
+
+
+/* set the brightness of the light to a % */
+bool subc_mkii_set_brightness(SubcMkII *driver, uint8_t percent)
+{
+    char cmd[8];  // "$Lb" + up to 3 digits + null
+
+    /* Reject new command if one is already active NEEDED BY EVERY COMMAND*/
+    if (driver->command_active)
+        return false;
+
+    /* Reset response tracking - NEEDED BY EVERY COMMAND */
+    driver->response_len   = 0;
+    driver->response_ready = false;
+    driver->command_active = true;
+
+    /* Clamp percent to valid range */
+    if (percent > 100)
+        percent = 100;
+
+    /*
+     * Format light command.
+     * Protocol requires:
+     *   $     start character
+     *   Lb    brightness opcode
+     *   ###   decimal parameter (no terminator)
+     */
+    snprintf(cmd, sizeof(cmd), "$Lb%u", percent);
+
+    /* Send command to the light */
+    Serial_print(driver->light_serial, cmd);
+
+    /* Mark command as in progress */
+    driver->command_active = true;
+
+    return true;
+}
+
+
+
+/**
+ * subc_mkii_poll
+ *
+ * Advance the internal state of the SubC MkII driver.
+ */
+void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms)
+{
+	// Make sure the driver, and serial connection are properly initialized.
+    if (!driver || !driver->light_serial)
+        return;
+
+    /* Drain all available bytes from the light serial port */
+    while (Serial_available(driver->light_serial) > 0)
+    {
+    	// Read a byte from serial
+        int c = Serial_read(driver->light_serial);
+
+        // If we didn't read a byte, exit the loop
+        if (c < 0)
+            break;
+
+        // If we have not filled up our driver buffer, copy that byte into it, drop otherwise.
+        if (driver->response_len < SUBC_MKII_RESPONSE_BUF_SIZE)
+        {
+            driver->response_buf[driver->response_len++] = (uint8_t)c;
+        }
+
+        /* Update timestamp whenever we receive data */
+        driver->last_rx_time_ms = now_ms;
+    }
+
+    /* If a command is active and the line has been quiet long enough,
+     * mark the response as complete */
+    if (driver->command_active &&
+        driver->response_len > 0 &&
+        (now_ms - driver->last_rx_time_ms) >= SUBC_MKII_RESPONSE_TIMEOUT_MS)
+    {
+        driver->command_active = false;
+        driver->response_ready = true;
+    }
+}
+
+
+/* Tells us if a response is available in the reponse buffer. */
+bool subc_mkii_response_available(SubcMkII *driver)
+{
+    if (!driver)
+        return false;
+
+    return driver->response_ready;
+}
+
+
+/* Returns the response in the response buffer, and clears the buffer. */
+bool subc_mkii_read_response(SubcMkII *driver,
+                             uint8_t *out_buf,
+                             uint16_t *out_len)
+{
+    // Check to make sure the driver has been initialized.
+    // and make sure a response is ready.
+    if (!driver || !driver->response_ready)
+        return false;
+
+
+    // Copy  the completed response out of the driver
+    // and into memory provided by the caller.
+    if (out_buf && out_len)
+    {
+        for (uint16_t i = 0; i < driver->response_len; i++)
+        {
+            out_buf[i] = driver->response_buf[i];
+        }
+
+        *out_len = driver->response_len;
+    }
+
+    /* Clear response state */
+    driver->response_len   = 0;
+    driver->response_ready = false;
+
+    return true;
 }

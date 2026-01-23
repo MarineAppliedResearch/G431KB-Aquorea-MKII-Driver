@@ -35,8 +35,21 @@ extern "C" {
  * Includes
  * -------------------------------------------------------------------------- */
 #include <stdbool.h>
+#include <stdint.h>
 #include "serial.h"
 
+
+
+/* --------------------------------------------------------------------------
+ * Configuration
+ * -------------------------------------------------------------------------- */
+
+/* Maximum number of bytes we will store for a single light response */
+#define SUBC_MKII_RESPONSE_BUF_SIZE 256
+
+/* Quiet time (in milliseconds) that indicates the end of a response.
+ * This value will be tuned with real hardware testing. */
+#define SUBC_MKII_RESPONSE_TIMEOUT_MS 10
 
 /* --------------------------------------------------------------------------
  * Driver context
@@ -56,7 +69,21 @@ typedef struct
     /* True while a command is in progress */
     bool command_active;
 
+    /* True when a complete response has been received */
+    bool response_ready;
+
+    /* Raw response buffer */
+    uint8_t response_buf[SUBC_MKII_RESPONSE_BUF_SIZE];
+    uint16_t response_len;
+
+    /* Timestamp of the most recent received byte (ms) */
+    uint32_t last_rx_time_ms;
+
 } SubcMkII;
+
+
+
+
 
 /* --------------------------------------------------------------------------
  * Public API
@@ -68,6 +95,46 @@ typedef struct
  * Initialize a SubcMkII driver instance.
  */
 void subc_mkii_init(SubcMkII *driver, SerialPort *light_serial);
+
+
+/**
+ * subc_mkii_set_brightness
+ * Send a brightness command to the SubC Aquorea MkII light.
+ * percent: Desired brightness level (0–100).
+ * Returns:
+ *   true  - Command accepted and sent to the light
+ *   false - Driver is busy processing another command
+ */
+bool subc_mkii_set_brightness(SubcMkII *driver, uint8_t percent);
+
+
+/**
+ * subc_mkii_poll
+ *
+ * Advance the driver by collecting any response data from the light
+ * and determining when a response has completed.
+ */
+void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms);
+
+
+/**
+ * subc_mkii_response_available
+ *
+ * Return true if a complete response from the light is available.
+ */
+bool subc_mkii_response_available(SubcMkII *driver);
+
+
+/**
+ * subc_mkii_read_response
+ *
+ * Retrieve the completed response from the light.
+ * The response buffer is cleared after this call.
+ */
+bool subc_mkii_read_response(SubcMkII *driver,
+                             uint8_t *out_buf,
+                             uint16_t *out_len);
+
 
 #ifdef __cplusplus
 }

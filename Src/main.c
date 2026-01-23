@@ -51,6 +51,7 @@ UART_HandleTypeDef huart2;
 // Create our Serial Port meant for USB debugging
 SerialPort SerialUSB;
 SerialPort SerialLIGHT;
+SubcMkII light_driver;
 
 /* USER CODE END PV */
 
@@ -101,9 +102,10 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  // Start the USB serial device
+  // Start the Drivers
   Serial_begin(&SerialUSB, &huart2, 115200);
   Serial_begin(&SerialLIGHT, &huart1, 9600);
+  subc_mkii_init(&light_driver, &SerialLIGHT);
 
   /* USER CODE END 2 */
 
@@ -111,28 +113,43 @@ int main(void)
   /* USER CODE BEGIN WHILE */
    while (1)
     {
-	   // Forward anything that comes in on SerialUSB to SerialLIGHT
+	   subc_mkii_poll(&light_driver, HAL_GetTick());
+
+
 	   if (Serial_available(&SerialUSB) > 0)
 	   {
-		   int c = Serial_read(&SerialUSB);
-		   if (c >= 0)
-		   {
-			   char out[2] = { (char)c, 0 };
-			   Serial_print(&SerialLIGHT, out);
-		   }
+	       int c = Serial_read(&SerialUSB);
+
+	       if (c == '1')
+	       {
+	           subc_mkii_set_brightness(&light_driver, 100);
+	           Serial_print(&SerialUSB, "Brightness set to 100\r\n");
+	       }
+	       else if (c == '0')
+	       {
+	           subc_mkii_set_brightness(&light_driver, 0);
+	           Serial_print(&SerialUSB, "Brightness set to 0\r\n");
+	       }
 	   }
 
+	   uint8_t resp[128];
+	   uint16_t resp_len;
 
-	   // Forward anything that comes in on SerialLIGHT to SerialUSB
-	   if (Serial_available(&SerialLIGHT) > 0)
+	   if (subc_mkii_response_available(&light_driver))
 	   {
-		   int c = Serial_read(&SerialLIGHT);
-		   if (c >= 0)
-		   {
-			   char out[2] = { (char)c, 0 };
-			   Serial_print(&SerialUSB, out);
-		   }
+	       subc_mkii_read_response(&light_driver, resp, &resp_len);
+
+	       /* Forward raw response to host */
+	       for (uint16_t i = 0; i < resp_len; i++)
+	       {
+	           char out[2] = { (char)resp[i], 0 };
+	           Serial_print(&SerialUSB, out);
+
+	       }
 	   }
+
+
+
 
     /* USER CODE END WHILE */
 
