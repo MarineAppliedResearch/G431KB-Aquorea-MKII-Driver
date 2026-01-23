@@ -39,7 +39,6 @@ extern "C" {
 #include "serial.h"
 
 
-
 /* --------------------------------------------------------------------------
  * Configuration
  * -------------------------------------------------------------------------- */
@@ -51,9 +50,27 @@ extern "C" {
  * This value will be tuned with real hardware testing. */
 #define SUBC_MKII_RESPONSE_TIMEOUT_MS 10
 
+
 /* --------------------------------------------------------------------------
  * Driver context
  * -------------------------------------------------------------------------- */
+
+/**
+ * SubcCommandState
+ * Tracks whether an exclusive command is currently active.
+ * Streaming commands do not affect this state and may be issued at any time.
+ * Exclusive commands are rejected while another exclusive command is active.
+ */
+typedef enum
+{
+    /* No exclusive command is in progress */
+    SUBC_CMD_IDLE = 0,
+
+    /* An exclusive command is active and collecting a response */
+    SUBC_CMD_EXCLUSIVE_ACTIVE
+
+} SubcCommandState;
+
 
 /**
  * SubcMkII
@@ -66,8 +83,8 @@ typedef struct
     /* Serial interface connected to the light */
     SerialPort *light_serial;
 
-    /* True while a command is in progress */
-    bool command_active;
+    /* Current exclusive command state */
+    SubcCommandState cmd_state;
 
     /* True when a complete response has been received */
     bool response_ready;

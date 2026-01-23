@@ -33,27 +33,39 @@
  */
 void subc_mkii_init(SubcMkII *driver, SerialPort *light_serial)
 {
+    if (!driver)
+        return;
+
+
     /* Associate this driver instance with the light's serial interface */
     driver->light_serial = light_serial;
 
-    /* No command is active at initialization */
-    driver->command_active = false;
+    /* No exclusive command active at startup */
+    driver->cmd_state = SUBC_CMD_IDLE;
+
+    /* Clear response tracking state */
+    driver->response_len   = 0;
+    driver->response_ready = false;
+    driver->last_rx_time_ms = 0;
 }
 
 
-/* set the brightness of the light to a % */
+/**
+ * subc_mkii_set_brightness
+ *
+ * Set the light brightness as a percentage.
+ *
+ * This is a streaming command:
+ * - It does not wait for a response
+ * - It does not block other commands
+ * - It may be sent repeatedly at high rate
+ */
 bool subc_mkii_set_brightness(SubcMkII *driver, uint8_t percent)
 {
-    char cmd[8];  // "$Lb" + up to 3 digits + null
+    char cmd[8];  /* "$Lb" + up to 3 digits + null */
 
-    /* Reject new command if one is already active NEEDED BY EVERY COMMAND*/
-    if (driver->command_active)
+    if (!driver || !driver->light_serial)
         return false;
-
-    /* Reset response tracking - NEEDED BY EVERY COMMAND */
-    driver->response_len   = 0;
-    driver->response_ready = false;
-    driver->command_active = true;
 
     /* Clamp percent to valid range */
     if (percent > 100)
@@ -68,11 +80,8 @@ bool subc_mkii_set_brightness(SubcMkII *driver, uint8_t percent)
      */
     snprintf(cmd, sizeof(cmd), "$Lb%u", percent);
 
-    /* Send command to the light */
+    /* Send command to the light immediately */
     Serial_print(driver->light_serial, cmd);
-
-    /* Mark command as in progress */
-    driver->command_active = true;
 
     return true;
 }
@@ -110,15 +119,14 @@ void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms)
         driver->last_rx_time_ms = now_ms;
     }
 
-    /* If a command is active and the line has been quiet long enough,
-     * mark the response as complete */
-    if (driver->command_active &&
-        driver->response_len > 0 &&
-        (now_ms - driver->last_rx_time_ms) >= SUBC_MKII_RESPONSE_TIMEOUT_MS)
-    {
-        driver->command_active = false;
-        driver->response_ready = true;
-    }
+    /* If an exclusive command is active, check for response completion */
+   if (driver->cmd_state == SUBC_CMD_EXCLUSIVE_ACTIVE &&
+	   driver->response_len > 0 &&
+	   (now_ms - driver->last_rx_time_ms) >=SUBC_MKII_RESPONSE_TIMEOUT_MS)
+   {
+	   driver->cmd_state      = SUBC_CMD_IDLE;
+	   driver->response_ready = true;
+   }
 }
 
 
