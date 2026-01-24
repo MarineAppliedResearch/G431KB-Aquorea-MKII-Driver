@@ -24,6 +24,7 @@
 #include <string.h>
 #include "serial.h"
 #include "subc_mkii.h"
+#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -129,6 +130,18 @@ int main(void)
 	       {
 	           subc_mkii_set_brightness(&light_driver, 0);
 	           Serial_print(&SerialUSB, "Brightness set to 0\r\n");
+	       }else if( c == 't'){
+
+	    	   float temp;
+	    	   char temp_buf[32];
+
+	    	   subc_mkii_get_temperature(&light_driver, &temp);
+
+	    	   snprintf(temp_buf, sizeof(temp_buf), "Temp: %.2f C\r\n", temp);
+
+	    	   Serial_print(&SerialUSB, temp_buf);
+	       }else if (c == 's'){
+
 	       }
 	   }
 

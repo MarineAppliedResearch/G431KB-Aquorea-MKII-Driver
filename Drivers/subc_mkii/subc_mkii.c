@@ -99,6 +99,9 @@ void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms)
     if (!driver || !driver->light_serial)
         return;
 
+    /* Background telemetry */
+    subc_mkii_request_temperature_internal(driver, now_ms);
+
     /* Drain all available bytes from the light serial port */
     while (Serial_available(driver->light_serial) > 0)
     {
@@ -120,13 +123,22 @@ void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms)
     }
 
     /* If an exclusive command is active, check for response completion */
-   if (driver->cmd_state == SUBC_CMD_EXCLUSIVE_ACTIVE &&
-	   driver->response_len > 0 &&
-	   (now_ms - driver->last_rx_time_ms) >=SUBC_MKII_RESPONSE_TIMEOUT_MS)
-   {
-	   driver->cmd_state      = SUBC_CMD_IDLE;
-	   driver->response_ready = true;
-   }
+    if (driver->cmd_state == SUBC_CMD_EXCLUSIVE_ACTIVE &&
+        driver->response_len > 0 &&
+        (now_ms - driver->last_rx_time_ms) >= SUBC_MKII_RESPONSE_TIMEOUT_MS)
+    {
+        /* Null-terminate so we can safely treat it as a string */
+        if (driver->response_len < SUBC_MKII_RESPONSE_BUF_SIZE)
+        {
+            driver->response_buf[driver->response_len] = '\0';
+        }
+
+        /* If this was a temperature request, parse it */
+        subc_mkii_parse_temperature(driver);
+
+        driver->cmd_state      = SUBC_CMD_IDLE;
+        driver->response_ready = true;
+    }
 }
 
 
@@ -168,4 +180,112 @@ bool subc_mkii_read_response(SubcMkII *driver,
     driver->response_ready = false;
 
     return true;
+}
+
+
+/**
+ * subc_mkii_get_temperature
+ *
+ * Get the most recently recorded temperature.
+ */
+
+bool subc_mkii_get_temperature(SubcMkII *driver, float *out_temp)
+{
+    if (!driver || !out_temp || driver->temp_samples == 0)
+        return false;
+
+    *out_temp = driver->temp_current;
+    return true;
+}
+
+
+
+/**
+ * subc_mkii_get_temperature_stats
+ *
+ * Get temperature statistics collected since driver initialization.
+ */
+
+bool subc_mkii_get_temperature_stats(SubcMkII *driver,
+                                     float *out_min,
+                                     float *out_max,
+                                     float *out_avg)
+{
+    if (!driver || driver->temp_samples == 0)
+        return false;
+
+    if (out_min)
+        *out_min = driver->temp_min;
+
+    if (out_max)
+        *out_max = driver->temp_max;
+
+    if (out_avg)
+        *out_avg = driver->temp_sum / driver->temp_samples;
+
+    return true;
+}
+
+
+
+/* --------------------------------------------------------------------------
+ * Private Functions
+ * -------------------------------------------------------------------------- */
+
+/**
+ * subc_mkii_request_temperature_internal
+ *
+ * Internal helper used by the driver to request temperature
+ * as part of background telemetry collection.
+ */
+void subc_mkii_request_temperature_internal(SubcMkII *driver,
+                                                    uint32_t now_ms)
+{
+    if (!driver || !driver->light_serial)
+        return;
+
+    /* Do not interrupt another exclusive command */
+    if (driver->cmd_state != SUBC_CMD_IDLE)
+        return;
+
+    /* Enforce internal rate limit */
+    if ((now_ms - driver->last_temp_request_ms) <
+        SUBC_MKII_TEMP_REQUEST_INTERVAL_MS)
+        return;
+
+    /* Prepare to collect response */
+    driver->response_len   = 0;
+    driver->response_ready = false;
+    driver->cmd_state      = SUBC_CMD_EXCLUSIVE_ACTIVE;
+    driver->last_temp_request_ms = now_ms;
+
+    /* Send temperature request command */
+    Serial_print(driver->light_serial, "$St");
+}
+
+
+void subc_mkii_parse_temperature(SubcMkII *driver)
+{
+    char *p = strstr((char *)driver->response_buf, "Temp:");
+    if (!p)
+        return;
+
+    float temp = strtof(p + 5, NULL);
+
+    driver->temp_current = temp;
+
+    if (driver->temp_samples == 0)
+    {
+        driver->temp_min = temp;
+        driver->temp_max = temp;
+        driver->temp_sum = temp;
+    }
+    else
+    {
+        if (temp < driver->temp_min) driver->temp_min = temp;
+        if (temp > driver->temp_max) driver->temp_max = temp;
+        driver->temp_sum += temp;
+    }
+
+    driver->temp_samples++;
 }

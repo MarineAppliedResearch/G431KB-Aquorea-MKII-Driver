@@ -50,6 +50,9 @@ extern "C" {
  * This value will be tuned with real hardware testing. */
 #define SUBC_MKII_RESPONSE_TIMEOUT_MS 10
 
+/* How many milliseconds the driver waits between querying the temp. */
+#define SUBC_MKII_TEMP_REQUEST_INTERVAL_MS 5000
+
 
 /* --------------------------------------------------------------------------
  * Driver context
@@ -95,6 +98,28 @@ typedef struct
 
     /* Timestamp of the most recent received byte (ms) */
     uint32_t last_rx_time_ms;
+
+    /* ------------------------------------------------------------------
+	 * Temperature tracking
+	 * ------------------------------------------------------------------ */
+
+	/* Most recently received temperature (degrees C) */
+	float temp_current;
+
+	/* Lowest temperature observed since init */
+	float temp_min;
+
+	/* Highest temperature observed since init */
+	float temp_max;
+
+	/* Running sum of temperatures for averaging */
+	float temp_sum;
+
+	/* Number of temperature samples collected */
+	uint32_t temp_samples;
+
+	/* Timestamp of last temperature request */
+	uint32_t last_temp_request_ms;
 
 } SubcMkII;
 
@@ -151,6 +176,51 @@ bool subc_mkii_response_available(SubcMkII *driver);
 bool subc_mkii_read_response(SubcMkII *driver,
                              uint8_t *out_buf,
                              uint16_t *out_len);
+
+
+/**
+ * subc_mkii_get_temperature
+ *
+ * Return the most recently recorded temperature sample.
+ *
+ * Notes:
+ *   This does not talk to the light. It only returns the cached value that
+ *   was last parsed from a temperature response.
+ *
+ * Inputs:
+ *   driver   - Driver instance
+ *   out_temp - Output pointer to receive the temperature (degrees C)
+ *
+ * Outputs:
+ *   true  if a temperature sample is available and was written to out_temp
+ *   false if driver/out_temp is invalid or no samples have been recorded yet
+ */
+bool subc_mkii_get_temperature(SubcMkII *driver, float *out_temp);
+
+
+/**
+ * subc_mkii_get_temperature_stats
+ *
+ * Return temperature statistics collected since driver initialization.
+ *
+ * Notes:
+ *   Any output pointer may be NULL if the caller does not need that value.
+ *   Average is computed from the running sum and sample count.
+ *
+ * Inputs:
+ *   driver  - Driver instance
+ *   out_min - Output pointer for minimum observed temperature (optional)
+ *   out_max - Output pointer for maximum observed temperature (optional)
+ *   out_avg - Output pointer for average temperature (optional)
+ *
+ * Outputs:
+ *   true  if at least one sample exists and requested outputs were written
+ *   false if driver is invalid or no samples have been recorded yet
+ */
+bool subc_mkii_get_temperature_stats(SubcMkII *driver,
+                                     float *out_min,
+                                     float *out_max,
+                                     float *out_avg);
 
 
 #ifdef __cplusplus
