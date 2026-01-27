@@ -21,6 +21,10 @@
 #include "subc_mkii.h"
 #include <stdio.h>
 
+
+
+
+
 /* --------------------------------------------------------------------------
  * Public Functions
  * -------------------------------------------------------------------------- */
@@ -36,6 +40,9 @@ void subc_mkii_init(SubcMkII *driver, SerialPort *light_serial)
     if (!driver)
         return;
 
+    // Uptime tracking starts on first poll
+    driver->start_time_ms = 0;
+    driver->uptime_ms     = 0;
 
     /* Associate this driver instance with the light's serial interface */
     driver->light_serial = light_serial;
@@ -99,8 +106,19 @@ void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms)
     if (!driver || !driver->light_serial)
         return;
 
+    // Initialize uptime reference on first poll
+    if (driver->start_time_ms == 0)
+    {
+        driver->start_time_ms = now_ms;
+        driver->uptime_ms     = 0;
+    }
+    else
+    {
+        driver->uptime_ms = now_ms - driver->start_time_ms;
+    }
+
     /* Background telemetry */
-    subc_mkii_request_temperature_internal(driver, now_ms);
+    subc_mkii_request_temperature_internal(driver, now_ms); // update the temp
 
     /* Drain all available bytes from the light serial port */
     while (Serial_available(driver->light_serial) > 0)
@@ -189,7 +207,7 @@ bool subc_mkii_read_response(SubcMkII *driver,
  * Get the most recently recorded temperature.
  */
 
-bool subc_mkii_get_temperature(SubcMkII *driver, float *out_temp)
+bool subc_mkii_get_temperature(SubcMkII *driver, uint32_t *out_temp)
 {
     if (!driver || !out_temp || driver->temp_samples == 0)
         return false;
@@ -207,9 +225,10 @@ bool subc_mkii_get_temperature(SubcMkII *driver, float *out_temp)
  */
 
 bool subc_mkii_get_temperature_stats(SubcMkII *driver,
-                                     float *out_min,
-                                     float *out_max,
-                                     float *out_avg)
+                                     uint32_t *out_min,
+									 uint32_t *out_max,
+									 uint32_t *out_avg,
+									 uint32_t *out_current)
 {
     if (!driver || driver->temp_samples == 0)
         return false;
@@ -221,7 +240,10 @@ bool subc_mkii_get_temperature_stats(SubcMkII *driver,
         *out_max = driver->temp_max;
 
     if (out_avg)
-        *out_avg = driver->temp_sum / driver->temp_samples;
+        *out_avg = (int32_t)(driver->temp_sum / driver->temp_samples);
+
+    if(out_current)
+    	*out_current = driver->temp_current;
 
     return true;
 }
@@ -264,28 +286,102 @@ void subc_mkii_request_temperature_internal(SubcMkII *driver,
 }
 
 
+/**
+ * subc_mkii_parse_temperature
+ *
+ * Parse the current temperature value from a completed light response
+ * and update cached temperature statistics.
+ */
 void subc_mkii_parse_temperature(SubcMkII *driver)
 {
+    // Validate driver pointer before accessing internal state
+    if (!driver)
+        return;
+
+    // Search the response buffer for the "Temp:" field
     char *p = strstr((char *)driver->response_buf, "Temp:");
     if (!p)
         return;
 
-    float temp = strtof(p + 5, NULL);
+    // Advance pointer past the "Temp:" label
+    p += 5;
 
-    driver->temp_current = temp;
+    // Track sign for negative temperatures
+    int32_t sign = 1;
+    if (*p == '-')
+    {
+        sign = -1;
+        p++;
+    }
 
+    // Parse the integer portion of the temperature
+    int32_t int_part = 0;
+    bool has_digits = false;
+
+    while (*p >= '0' && *p <= '9')
+    {
+        has_digits = true;
+        int_part = (int_part * 10) + (*p - '0');
+        p++;
+    }
+
+    // Abort if no numeric digits were found
+    if (!has_digits)
+        return;
+
+    // Parse the fractional portion, if present
+    int32_t frac_part  = 0;
+    int32_t frac_scale = 1;
+
+    if (*p == '.')
+    {
+        p++;
+
+        // Collect up to two fractional digits for centi-degree resolution
+        while (*p >= '0' && *p <= '9' && frac_scale < 100)
+        {
+            frac_part  = (frac_part * 10) + (*p - '0');
+            frac_scale *= 10;
+            p++;
+        }
+    }
+
+    // Convert parsed value into centi-degrees Celsius
+    int32_t temp_centi =
+        sign * ((int_part * 100) + ((frac_part * 100) / frac_scale));
+
+    // Store most recent temperature
+    driver->temp_current = temp_centi;
+
+    // Initialize min/max on first sample
     if (driver->temp_samples == 0)
     {
-        driver->temp_min = temp;
-        driver->temp_max = temp;
-        driver->temp_sum = temp;
+        driver->temp_min = temp_centi;
+        driver->temp_max = temp_centi;
     }
     else
     {
-        if (temp < driver->temp_min) driver->temp_min = temp;
-        if (temp > driver->temp_max) driver->temp_max = temp;
-        driver->temp_sum += temp;
+        // Update min/max bounds
+        if (temp_centi < driver->temp_min) driver->temp_min = temp_centi;
+        if (temp_centi > driver->temp_max) driver->temp_max = temp_centi;
     }
 
+    // Accumulate sum for average calculation
+    driver->temp_sum += temp_centi;
     driver->temp_samples++;
+}
+
+
+/**
+ * subc_mkii_get_uptime
+ *
+ * Return the driver uptime in milliseconds.
+ */
+bool subc_mkii_get_uptime(SubcMkII *driver, uint32_t *out_uptime_ms)
+{
+    if (!driver || !out_uptime_ms)
+        return false;
+
+    *out_uptime_ms = driver->uptime_ms;
+    return true;
 }

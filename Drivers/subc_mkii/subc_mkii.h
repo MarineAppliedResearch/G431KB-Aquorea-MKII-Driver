@@ -48,15 +48,17 @@ extern "C" {
 
 /* Quiet time (in milliseconds) that indicates the end of a response.
  * This value will be tuned with real hardware testing. */
-#define SUBC_MKII_RESPONSE_TIMEOUT_MS 10
+#define SUBC_MKII_RESPONSE_TIMEOUT_MS 5
 
 /* How many milliseconds the driver waits between querying the temp. */
-#define SUBC_MKII_TEMP_REQUEST_INTERVAL_MS 5000
+#define SUBC_MKII_TEMP_REQUEST_INTERVAL_MS 10000
 
 
 /* --------------------------------------------------------------------------
  * Driver context
  * -------------------------------------------------------------------------- */
+
+
 
 /**
  * SubcCommandState
@@ -104,22 +106,32 @@ typedef struct
 	 * ------------------------------------------------------------------ */
 
 	/* Most recently received temperature (degrees C) */
-	float temp_current;
+	int32_t temp_current;
 
 	/* Lowest temperature observed since init */
-	float temp_min;
+	int32_t temp_min;
 
 	/* Highest temperature observed since init */
-	float temp_max;
+	int32_t temp_max;
 
-	/* Running sum of temperatures for averaging */
-	float temp_sum;
+	/* Running sum of temperatures for averaging, int64_t allows running for years without reset */
+	int64_t temp_sum;
 
 	/* Number of temperature samples collected */
 	uint32_t temp_samples;
 
 	/* Timestamp of last temperature request */
 	uint32_t last_temp_request_ms;
+
+	/* ------------------------------------------------------------------
+	 * Uptime tracking
+	 * ------------------------------------------------------------------ */
+
+	/* Timestamp of the first poll call (ms) */
+	uint32_t start_time_ms;
+
+	/* Most recent uptime value (ms) */
+	uint32_t uptime_ms;
 
 } SubcMkII;
 
@@ -195,7 +207,7 @@ bool subc_mkii_read_response(SubcMkII *driver,
  *   true  if a temperature sample is available and was written to out_temp
  *   false if driver/out_temp is invalid or no samples have been recorded yet
  */
-bool subc_mkii_get_temperature(SubcMkII *driver, float *out_temp);
+bool subc_mkii_get_temperature(SubcMkII *driver, uint32_t *out_temp);
 
 
 /**
@@ -218,9 +230,31 @@ bool subc_mkii_get_temperature(SubcMkII *driver, float *out_temp);
  *   false if driver is invalid or no samples have been recorded yet
  */
 bool subc_mkii_get_temperature_stats(SubcMkII *driver,
-                                     float *out_min,
-                                     float *out_max,
-                                     float *out_avg);
+									 uint32_t *out_min,
+									 uint32_t *out_max,
+									 uint32_t *out_avg,
+									 uint32_t *out_current);
+
+
+/**
+ * subc_mkii_get_uptime
+ *
+ * Return the total uptime of the driver since initialization.
+ *
+ * Notes:
+ *   Uptime is tracked internally using timestamps provided to
+ *   subc_mkii_poll() and represents elapsed milliseconds since
+ *   the driver became active.
+ *
+ * Inputs:
+ *   driver        - Driver instance
+ *   out_uptime_ms - Output pointer to receive uptime in milliseconds
+ *
+ * Outputs:
+ *   true  if the uptime value was written successfully
+ *   false if driver or output pointer is invalid
+ */
+bool subc_mkii_get_uptime(SubcMkII *driver, uint32_t *out_uptime_ms);
 
 
 #ifdef __cplusplus

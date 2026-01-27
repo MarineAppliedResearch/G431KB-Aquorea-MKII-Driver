@@ -36,6 +36,23 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+const char motd[] =
+"========================================================================\n"
+"  ███╗   ███╗  █████╗  ██████╗ ███████╗\n"
+"  ████╗ ████║ ██╔══██╗ ██╔══██╗██╔════╝\n"
+"  ██╔████╔██║ ███████║ ██████╔╝█████╗\n"
+"  ██║╚██╔╝██║ ██╔══██║ ██╔══██╗██╔══╝\n"
+"  ██║ ╚═╝ ██║ ██║  ██║ ██║  ██║███████╗\n"
+"  ╚═╝     ╚═╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝╚══════╝\n"
+"\n"
+"  Marine Applied Research & Exploration\n"
+"------------------------------------------------------------------------\n"
+"  Device   : SubC Aquorea MkII Light Controller\n"
+"  FW       : v0.1\n"
+"  Light FW : MkII v1.20\n"
+"  Build    : " __DATE__ " " __TIME__ "\n"
+"========================================================================\n";
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -108,6 +125,8 @@ int main(void)
   Serial_begin(&SerialLIGHT, &huart1, 9600);
   subc_mkii_init(&light_driver, &SerialLIGHT);
 
+  Serial_print(&SerialUSB, motd);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -130,21 +149,65 @@ int main(void)
 	       {
 	           subc_mkii_set_brightness(&light_driver, 0);
 	           Serial_print(&SerialUSB, "Brightness set to 0\r\n");
-	       }else if( c == 't'){
+	       }
+	       else if (c == 't')
+	       {
+	           uint32_t t_cur;
+	           uint32_t t_min;
+	           uint32_t t_max;
+	           uint32_t t_avg;
 
-	    	   float temp;
-	    	   char temp_buf[32];
+	           char buf[128];
 
-	    	   subc_mkii_get_temperature(&light_driver, &temp);
+	           if (subc_mkii_get_temperature_stats(&light_driver,
+	                                               &t_min,
+	                                               &t_max,
+	                                               &t_avg,
+	                                               &t_cur))
+	           {
+	               // Convert centi-degrees to human-readable form
+	               snprintf(buf, sizeof(buf),
+	                        "Temp C:%ld.%02ld  Min:%ld.%02ld  Max:%ld.%02ld  Avg:%ld.%02ld\r\n",
+	                        t_cur / 100,  abs(t_cur % 100),
+	                        t_min / 100,  abs(t_min % 100),
+	                        t_max / 100,  abs(t_max % 100),
+	                        t_avg / 100,  abs(t_avg % 100));
 
-	    	   snprintf(temp_buf, sizeof(temp_buf), "Temp: %.2f C\r\n", temp);
-
-	    	   Serial_print(&SerialUSB, temp_buf);
+	               Serial_print(&SerialUSB, buf);
+	           }
+	           else
+	           {
+	               Serial_print(&SerialUSB, "Temp: no data\r\n");
+	           }
 	       }else if (c == 's'){
 
 	       }
+	       else if( c == 'm'){
+	    	   Serial_print(&SerialUSB, motd);
+	       }
+	       else if (c == 'u')
+	       {
+	           uint32_t uptime_ms;
+	           char buf[64];
+
+	           if (subc_mkii_get_uptime(&light_driver, &uptime_ms))
+	           {
+	               uint32_t seconds = uptime_ms / 1000;
+	               uint32_t minutes = seconds / 60;
+	               uint32_t hours   = minutes / 60;
+
+	               snprintf(buf, sizeof(buf),
+	                        "Uptime: %lu:%02lu:%02lu\r\n",
+	                        hours,
+	                        minutes % 60,
+	                        seconds % 60);
+
+	               Serial_print(&SerialUSB, buf);
+	           }
+	       }
 	   }
 
+	   /*
 	   uint8_t resp[128];
 	   uint16_t resp_len;
 
@@ -152,7 +215,7 @@ int main(void)
 	   {
 	       subc_mkii_read_response(&light_driver, resp, &resp_len);
 
-	       /* Forward raw response to host */
+	       // Forward raw response to host //
 	       for (uint16_t i = 0; i < resp_len; i++)
 	       {
 	           char out[2] = { (char)resp[i], 0 };
@@ -160,6 +223,8 @@ int main(void)
 
 	       }
 	   }
+
+   	   */
 
 
 
