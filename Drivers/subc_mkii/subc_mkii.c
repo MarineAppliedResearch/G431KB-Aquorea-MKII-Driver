@@ -20,6 +20,7 @@
 
 #include "subc_mkii.h"
 #include <stdio.h>
+#include <string.h>
 
 
 
