@@ -25,6 +25,8 @@
 #include "serial.h"
 #include "subc_mkii.h"
 #include <stdio.h>
+#include "wizchip_driver.h"
+#include "wizchip_conf.h"
 
 /* USER CODE END Includes */
 
@@ -73,6 +75,23 @@ SerialPort SerialUSB;
 SerialPort SerialLIGHT;
 SubcMkII light_driver;
 
+// Create our Ethernet Driver
+WizchipDriver eth_driver;
+
+// Track if Ethernet has been initialized
+bool eth_initialized = false;
+
+
+static const WizchipNetConfig eth_cfg =
+{
+    .mac     = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 },
+    .ip      = { 192, 168, 1, 50 },
+    .subnet  = { 255, 255, 255, 0 },
+    .gateway = { 192, 168, 1, 1 },
+    .dns     = { 8, 8, 8, 8 },
+    .mode    = WIZCHIP_NET_STATIC
+};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -87,6 +106,14 @@ static void MX_SPI1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// Simple logger adapter for WIZnet drivers.
+// Routes driver log messages to the USB serial port.
+static void wiznet_log(const char *msg)
+{
+    Serial_print(&SerialUSB, (char *)msg);
+    Serial_print(&SerialUSB, "\r\n");
+}
 
 /* USER CODE END 0 */
 
@@ -131,13 +158,116 @@ int main(void)
 
   Serial_print(&SerialUSB, motd);
 
+
+
+  /* more dbug
+   *
+   */
+/*
+  uint8_t tx[4] = {0xAA, 0xAA, 0xAA, 0xAA};
+  uint8_t rx[4] = {0};
+
+  // MARKER: pulse RESET low briefly to indicate "about to call SPI"
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_RESET);
+  for (volatile int i = 0; i < 5000; i++) { } // short busy wait, no SysTick dependence
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_SET);
+
+  // CS low
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_RESET);
+
+  // SPI transfer
+  HAL_StatusTypeDef st = HAL_SPI_TransmitReceive(&hspi1, tx, rx, 4, 100);
+
+  // CS high
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_SET);
+
+  // MARKER: pulse RESET low briefly to indicate "returned from SPI"
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_RESET);
+  for (volatile int i = 0; i < 5000; i++) { }
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_SET);
+
+  while (1) { }
+*/
+
+/*
+  //Start debug spi code: good data
+  uint8_t tx[4] = {0xAA, 0xAA, 0xAA, 0xAA};
+  uint8_t rx[4] = {0};
+
+  // marker GPIO (use your RESET pin temporarily as a marker if you want)
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_RESET);
+
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_RESET);
+
+  HAL_StatusTypeDef st = HAL_SPI_TransmitReceive(&hspi1, tx, rx, 4, 100);
+
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_SET);
+
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_SET);
+
+
+  // stop
+  while (1) { }
+  /* End debug spi code */
+
+
+  /*/ no good data,
+  uint8_t tx[4] = {0xAA, 0xAA, 0xAA, 0xAA};
+  uint8_t rx[4] = {0};
+
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_SET);
+
+  // reset pulse
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_RESET);
+  HAL_Delay(10);
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_SET);
+
+  // single added change: wait after reset release
+  HAL_Delay(100);
+
+  // transfer
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_RESET);
+  HAL_StatusTypeDef st = HAL_SPI_TransmitReceive(&hspi1, tx, rx, 4, 100);
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_SET);
+
+  while (1) {}
+  //*/
+
+
+
+
+
+
+  // Attach logger callbacks for Ethernet bring-up diagnostics
+  wizchip_port_set_logger(wiznet_log);
+  wizchip_driver_set_logger(wiznet_log);
+
+  // Initialize Ethernet driver (SPI + reset + basic checks)
+  if (wizchip_driver_init(&eth_driver, &eth_cfg))
+  {
+      Serial_print(&SerialUSB, "W5500 init OK\r\n");
+      eth_initialized = true;
+  }
+  else
+  {
+      Serial_print(&SerialUSB, "W5500 init FAILED\r\n");
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
    while (1)
     {
+	   // Run the Light driver
 	   subc_mkii_poll(&light_driver, HAL_GetTick());
+
+
+	   if (eth_initialized)
+	   {
+		   // Run the ethernet driver
+	       wizchip_driver_poll(&eth_driver, HAL_GetTick());
+	   }
 
 
 	   if (Serial_available(&SerialUSB) > 0)
@@ -209,6 +339,43 @@ int main(void)
 	               Serial_print(&SerialUSB, buf);
 	           }
 	       }
+	       else if (c == 'e')
+	       {
+	           char buf[128];
+
+	           wizchip_driver_get_status(&eth_driver, buf, sizeof(buf));
+	           Serial_print(&SerialUSB, buf);
+	       }
+	       else if (c == 'l')
+	       {
+	           if (wizchip_driver_link_up(&eth_driver))
+	               Serial_print(&SerialUSB, "Ethernet link: UP\r\n");
+	           else
+	               Serial_print(&SerialUSB, "Ethernet link: DOWN\r\n");
+	       }
+	       else if (c == 'i')
+	       {
+	           wiz_NetInfo info;
+	           char buf[128];
+
+	           if (wizchip_driver_get_netinfo(&eth_driver, &info))
+	           {
+	               snprintf(buf, sizeof(buf),
+	                        "IP %d.%d.%d.%d  GW %d.%d.%d.%d\r\n",
+	                        info.ip[0], info.ip[1], info.ip[2], info.ip[3],
+	                        info.gw[0], info.gw[1], info.gw[2], info.gw[3]);
+	               Serial_print(&SerialUSB, buf);
+	           }
+	           else
+	           {
+	               Serial_print(&SerialUSB, "NetInfo unavailable\r\n");
+	           }
+	       }
+	       else if (c == 'd')
+	       {
+	           wizchip_driver_request_dhcp(&eth_driver);
+	           Serial_print(&SerialUSB, "DHCP requested\r\n");
+	       }
 	   }
 
 	   /*
@@ -259,13 +426,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV1;
-  RCC_OscInitStruct.PLL.PLLN = 8;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
-  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -275,12 +436,12 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
   {
     Error_Handler();
   }
@@ -309,7 +470,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -321,6 +482,7 @@ static void MX_SPI1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
+
 
   /* USER CODE END SPI1_Init 2 */
 
@@ -435,19 +597,28 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, SPI1_CS_Pin|SPI1_RESET_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : SPI1_CS_Pin SPI1_RESET_Pin */
-  GPIO_InitStruct.Pin = SPI1_CS_Pin|SPI1_RESET_Pin;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(SPI1_RESET_GPIO_Port, SPI1_RESET_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : SPI1_CS_Pin */
+  GPIO_InitStruct.Pin = SPI1_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(SPI1_CS_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SPI1_RESET_Pin */
+  GPIO_InitStruct.Pin = SPI1_RESET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(SPI1_RESET_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

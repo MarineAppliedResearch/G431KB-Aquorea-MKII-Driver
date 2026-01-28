@@ -65,7 +65,7 @@ extern "C" {
          ex> <code> #define \_WIZCHIP_      W5500 </code>
 */
 
-#define _WIZCHIP 	W5500
+#define _WIZCHIP_ 	W5500
 
 #define W5100						5100
 #define W5100S						5100+5

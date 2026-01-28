@@ -30,6 +30,12 @@ extern "C" {
  * -------------------------------------------------------------------------- */
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>  // for size_t
+
+#ifdef IR
+#undef IR
+#endif
+#include "wizchip_conf.h"
 
 /* --------------------------------------------------------------------------
  * Configuration
@@ -191,6 +197,71 @@ bool wizchip_driver_get_ip(WizchipDriver *driver,
  *   Passing NULL disables logging.
  */
 void wizchip_driver_set_logger(wizchip_log_fn fn);
+
+
+/**
+ * wizchip_driver_link_up
+ *
+ * Check the current Ethernet PHY link status.
+ *
+ * Inputs:
+ *   driver - Initialized driver instance
+ *
+ * Outputs:
+ *   true  if the physical link is up
+ *   false if link is down or driver is invalid
+ */
+bool wizchip_driver_link_up(WizchipDriver *driver);
+
+
+/**
+ * wizchip_driver_get_netinfo
+ *
+ * Retrieve the active network configuration from the W5500.
+ *
+ * Inputs:
+ *   driver   - Initialized driver instance
+ *   out_info - Caller-provided structure to receive network info
+ *
+ * Outputs:
+ *   true  if network info was read successfully
+ *   false if inputs are invalid
+ */
+bool wizchip_driver_get_netinfo(WizchipDriver *driver,
+                                wiz_NetInfo *out_info);
+
+
+/**
+ * wizchip_driver_get_status
+ *
+ * Generate a human-readable summary of the driver state.
+ *
+ * Inputs:
+ *   driver   - Driver instance
+ *   buf      - Output string buffer
+ *   buf_len  - Size of output buffer in bytes
+ *
+ * Notes:
+ *   Intended for diagnostics and CLI inspection.
+ */
+void wizchip_driver_get_status(WizchipDriver *driver,
+                               char *buf,
+                               size_t buf_len);
+
+
+/**
+ * wizchip_driver_request_dhcp
+ *
+ * Initiate a DHCP lease request.
+ *
+ * Inputs:
+ *   driver - Initialized driver instance
+ *
+ * Notes:
+ *   Transitions the driver into DHCP wait state.
+ *   Does not block and requires polling to complete.
+ */
+void wizchip_driver_request_dhcp(WizchipDriver *driver);
 
 #ifdef __cplusplus
 }
