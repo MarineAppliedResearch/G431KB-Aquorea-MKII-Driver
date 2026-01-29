@@ -218,16 +218,17 @@ bool wizchip_driver_init(WizchipDriver *driver,
     // Configure network interface based on selected mode
     if (cfg->mode == WIZCHIP_NET_STATIC)
     {
-        // Populate static network configuration
-        memcpy(netinfo.mac, cfg->mac, 6);
-        memcpy(netinfo.ip, cfg->ip, 4);
-        memcpy(netinfo.sn, cfg->subnet, 4);
-        memcpy(netinfo.gw, cfg->gateway, 4);
-        memcpy(netinfo.dns, cfg->dns, 4);
-        netinfo.dhcp = NETINFO_STATIC;
+    	wiz_NetInfo netinfo;
+    	memset(&netinfo, 0, sizeof(netinfo));
 
-        // Apply static configuration to the chip
-        ctlnetwork(CN_SET_NETINFO, &netinfo);
+    	memcpy(netinfo.mac, cfg->mac, 6);
+    	memcpy(netinfo.ip, cfg->ip, 4);
+    	memcpy(netinfo.sn, cfg->subnet, 4);
+    	memcpy(netinfo.gw, cfg->gateway, 4);
+    	memcpy(netinfo.dns, cfg->dns, 4);
+    	netinfo.dhcp = NETINFO_STATIC;
+
+    	ctlnetwork(CN_SET_NETINFO, &netinfo);
 
         // Mark network as usable
         driver->network_up = true;
