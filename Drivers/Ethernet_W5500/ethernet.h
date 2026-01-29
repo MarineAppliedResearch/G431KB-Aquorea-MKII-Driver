@@ -26,6 +26,18 @@
 #include "wizchip_driver.h"
 
 /**
+ * EthernetLinkStatus
+ *
+ * Represents the current physical Ethernet link state.
+ */
+typedef enum
+{
+    ETHERNET_LINK_UNKNOWN = 0,
+    ETHERNET_LINK_DOWN,
+    ETHERNET_LINK_UP
+} EthernetLinkStatus;
+
+/**
  * Ethernet_begin
  *
  * Initialize the Ethernet interface using the provided network
@@ -152,6 +164,47 @@ bool Ethernet_subnetMask(uint8_t out_mask[4]);
  *   out_mac contains the configured MAC address on success
  */
 bool Ethernet_macAddress(uint8_t out_mac[6]);
+
+
+/**
+ * Ethernet_linkStatus
+ *
+ * Query the current Ethernet PHY link state.
+ *
+ * Inputs:
+ *   none
+ *
+ * Returns:
+ *   ETHERNET_LINK_UP if link is active
+ *   ETHERNET_LINK_DOWN if link is down
+ *   ETHERNET_LINK_UNKNOWN if Ethernet is not initialized
+ *
+ * Preconditions:
+ *   Ethernet_begin must have been called
+ */
+EthernetLinkStatus Ethernet_linkStatus(void);
+
+
+/**
+ * Ethernet_status
+ *
+ * Retrieve a human-readable Ethernet status string.
+ *
+ * Inputs:
+ *   buf - Destination buffer for status text
+ *   len - Size of the destination buffer
+ *
+ * Returns:
+ *   true if status text was written
+ *   false if Ethernet is not initialized or inputs are invalid
+ *
+ * Preconditions:
+ *   Ethernet_begin must have been called
+ *
+ * Postconditions:
+ *   buf contains a null-terminated status string on success
+ */
+bool Ethernet_status(char *buf, size_t len);
 
 
 #endif /* ETHERNET_H */

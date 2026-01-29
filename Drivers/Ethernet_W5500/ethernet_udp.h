@@ -219,4 +219,59 @@ size_t EthernetUDP_write(EthernetUDP *udp,
  */
 bool EthernetUDP_endPacket(EthernetUDP *udp);
 
+
+/**
+ * EthernetUDP_remoteIP
+ *
+ * Retrieve the source IPv4 address of the most recently received packet.
+ *
+ * Inputs:
+ *   udp     - Pointer to an EthernetUDP instance
+ *   out_ip  - Pointer to a 4-byte buffer to receive the IP address
+ *
+ * Returns:
+ *   true if a valid remote IP address was written
+ *   false if no packet has been received or inputs are invalid
+ *
+ * Notes:
+ *   The remote address becomes valid after the first successful
+ *   EthernetUDP_read() call for a packet.
+ */
+bool EthernetUDP_remoteIP(const EthernetUDP *udp, uint8_t out_ip[4]);
+
+
+/**
+ * EthernetUDP_remotePort
+ *
+ * Retrieve the source UDP port of the most recently received packet.
+ *
+ * Inputs:
+ *   udp       - Pointer to an EthernetUDP instance
+ *   out_port  - Pointer to a variable to receive the port number
+ *
+ * Returns:
+ *   true if a valid remote port was written
+ *   false if no packet has been received or inputs are invalid
+ *
+ * Notes:
+ *   The remote port becomes valid after the first successful
+ *   EthernetUDP_read() call for a packet.
+ */
+bool EthernetUDP_remotePort(const EthernetUDP *udp, uint16_t *out_port);
+
+
+/**
+ * EthernetUDP_available
+ *
+ * Query how many payload bytes remain unread in the current packet.
+ *
+ * Inputs:
+ *   udp - Pointer to an EthernetUDP instance
+ *
+ * Returns:
+ *   Number of unread payload bytes
+ *   0 if no packet is active or inputs are invalid
+ */
+int EthernetUDP_available(const EthernetUDP *udp);
+
 #endif /* ETHERNET_UDP_H */

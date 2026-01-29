@@ -24,6 +24,8 @@
 
 static ethernet_udp_log_fn udp_logger = NULL;
 
+#define ETHERNET_UDP_DEBUG 0
+
 
 /**
  * Open and bind a UDP socket.
@@ -146,8 +148,10 @@ int EthernetUDP_read(EthernetUDP *udp, uint8_t *buf, size_t len)
 
     udp->remaining -= (uint16_t)ret;
 
+#if ETHERNET_UDP_DEBUG
     if (udp_logger && ret > 0)
         udp_logger("EthernetUDP_read: payload read\r\n");
+#endif
 
     return ret;
 }
@@ -164,8 +168,11 @@ int EthernetUDP_sendTo(EthernetUDP *udp,
                        const uint8_t ip[4],
                        uint16_t port)
 {
+
+#if ETHERNET_UDP_DEBUG
 	if (udp_logger)
 	    udp_logger("EthernetUDP_sendTo called\r\n");
+#endif
 
     // Validate instance and ensure socket is active
     if (!udp || !udp->active || !buf || !ip)
@@ -278,4 +285,55 @@ bool EthernetUDP_endPacket(EthernetUDP *udp)
     udp->tx_len    = 0;
 
     return ok;
+}
+
+
+/**
+ * Retrieve the source IPv4 address of the current UDP packet.
+ *
+ * This function exposes the cached sender IP address captured
+ * during the first recvfrom() call for a packet. It does not
+ * interact with the socket or modify RX state.
+ */
+bool EthernetUDP_remoteIP(const EthernetUDP *udp, uint8_t out_ip[4])
+{
+    // Validate inputs and ensure sender metadata is available
+    if (!udp || !out_ip || !udp->has_remote)
+        return false;
+
+    memcpy(out_ip, udp->remote_ip, 4);
+    return true;
+}
+
+
+/**
+ * Retrieve the source UDP port of the current packet.
+ *
+ * This function returns the cached sender port captured
+ * during the first recvfrom() call. No socket access occurs.
+ */
+bool EthernetUDP_remotePort(const EthernetUDP *udp, uint16_t *out_port)
+{
+    // Validate inputs and ensure sender metadata is available
+    if (!udp || !out_port || !udp->has_remote)
+        return false;
+
+    *out_port = udp->remote_port;
+    return true;
+}
+
+
+
+/**
+ * Report how many payload bytes remain unread in the current packet.
+ *
+ * This is a simple accessor for the internal remaining-byte counter
+ * and does not interact with the hardware.
+ */
+int EthernetUDP_available(const EthernetUDP *udp)
+{
+    if (!udp || !udp->active)
+        return 0;
+
+    return (int)udp->remaining;
 }

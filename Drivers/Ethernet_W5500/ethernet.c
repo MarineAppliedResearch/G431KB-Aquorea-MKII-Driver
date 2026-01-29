@@ -18,6 +18,7 @@
  *************************************************************************/
 
 #include "ethernet.h"
+#include <string.h>  // required for memcpy if used elsewhere
 
 // Single global Ethernet driver instance.
 // Arduino assumes exactly one Ethernet interface.
@@ -160,5 +161,46 @@ bool Ethernet_macAddress(uint8_t out_mac[6])
     // Copy only the MAC address requested by the caller
     memcpy(out_mac, info.mac, 6);
 
+    return true;
+}
+
+
+/**
+ * Query the current Ethernet PHY link state.
+ *
+ * This function provides a stable, Arduino-style link status
+ * abstraction without exposing driver internals.
+ */
+EthernetLinkStatus Ethernet_linkStatus(void)
+{
+    // Cannot determine link state before initialization
+    if (!eth_initialized)
+        return ETHERNET_LINK_UNKNOWN;
+
+    // Delegate PHY query to driver
+    if (wizchip_driver_link_up(&eth_driver))
+        return ETHERNET_LINK_UP;
+
+    return ETHERNET_LINK_DOWN;
+}
+
+
+/**
+ * Retrieve a human-readable Ethernet status string.
+ *
+ * This function is intended for diagnostics and CLI output.
+ * It delegates formatting to the driver layer and enforces
+ * initialization and buffer safety.
+ */
+bool Ethernet_status(char *buf, size_t len)
+{
+    // Validate inputs and initialization state
+    if (!eth_initialized || !buf || len == 0)
+        return false;
+
+    // Driver emits status text into caller-provided buffer
+    wizchip_driver_get_status(&eth_driver, buf, len);
+
+    // Driver does not report failure; reaching here means success
     return true;
 }

@@ -260,7 +260,7 @@ while (1) {}
 
 
 
-	   // UDP echo test
+	   // UDP echo test using accessors only
 	   int packet_size = EthernetUDP_parsePacket(&udp);
 	   if (packet_size > 0)
 	   {
@@ -270,16 +270,26 @@ while (1) {}
 
 	       if (len > 0)
 	       {
-	           // Begin Arduino-style packet back to sender
-	           if (EthernetUDP_beginPacket(&udp,
-	                                       udp.remote_ip,
-	                                       udp.remote_port))
-	           {
-	               // Write payload into TX buffer
-	               EthernetUDP_write(&udp, udp_rx_buf, (size_t)len);
+	           uint8_t  remote_ip[4];
+	           uint16_t remote_port;
 
-	               // Transmit echoed packet
-	               EthernetUDP_endPacket(&udp);
+	           // Retrieve sender metadata via accessors
+	           if (EthernetUDP_remoteIP(&udp, remote_ip) &&
+	               EthernetUDP_remotePort(&udp, &remote_port))
+	           {
+	               // Begin Arduino-style packet back to sender
+	               if (EthernetUDP_beginPacket(&udp,
+	                                           remote_ip,
+	                                           remote_port))
+	               {
+	                   // Write payload into TX buffer
+	                   EthernetUDP_write(&udp,
+	                                     udp_rx_buf,
+	                                     (size_t)len);
+
+	                   // Transmit echoed packet
+	                   EthernetUDP_endPacket(&udp);
+	               }
 	           }
 	       }
 	   }
@@ -364,20 +374,27 @@ while (1) {}
 	       }
 	       else if (c == 'e')
 	       {
-	           ////char buf[128];
+	           char buf[128];
 
-	           ////wizchip_driver_get_status(&eth_driver, buf, sizeof(buf));
-	           ////Serial_print(&SerialUSB, buf);
+	           if (Ethernet_status(buf, sizeof(buf)))
+	               Serial_print(&SerialUSB, buf);
+	           else
+	               Serial_print(&SerialUSB, "Ethernet status unavailable\r\n");
 	       }
 	       else if (c == 'l')
 	       {
-	    	   if (Ethernet_linkUp())
-	    	       Serial_println(&SerialUSB, "Ethernet Link UP");
-	    	   else
-	    	       Serial_println(&SerialUSB, "Ethernet Link DOWN");
+	           EthernetLinkStatus st = Ethernet_linkStatus();
+
+	           if (st == ETHERNET_LINK_UP)
+	               Serial_print(&SerialUSB, "Ethernet Link: UP\r\n");
+	           else if (st == ETHERNET_LINK_DOWN)
+	               Serial_print(&SerialUSB, "Ethernet Link: DOWN\r\n");
+	           else
+	               Serial_print(&SerialUSB, "Ethernet Link: UNKNOWN\r\n");
 	       }
 	       else if (c == 'i')
 	       {
+	    	   // print ethernet info
 	           uint8_t ip[4];
 	           uint8_t gw[4];
 	           uint8_t mask[4];
