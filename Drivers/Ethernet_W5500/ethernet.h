@@ -48,6 +48,7 @@
  */
 bool Ethernet_begin(const WizchipNetConfig *cfg);
 
+
 /**
  * Ethernet_linkUp
  *
@@ -68,6 +69,7 @@ bool Ethernet_begin(const WizchipNetConfig *cfg);
  */
 bool Ethernet_linkUp(void);
 
+
 /**
  * Ethernet_localIP
  *
@@ -87,5 +89,48 @@ bool Ethernet_linkUp(void);
  *   out_ip contains the current IPv4 address on success
  */
 bool Ethernet_localIP(uint8_t out_ip[4]);
+
+
+/**
+ * Ethernet_gatewayIP
+ *
+ * Retrieve the configured IPv4 gateway address.
+ *
+ * Inputs:
+ *   out_gw - Pointer to a 4-byte buffer to receive the gateway address
+ *
+ * Returns:
+ *   true if a valid gateway address was written
+ *   false if Ethernet is not initialized or out_gw is NULL
+ *
+ * Preconditions:
+ *   Ethernet_begin must have been called successfully
+ *
+ * Postconditions:
+ *   out_gw contains the configured gateway address on success
+ */
+bool Ethernet_gatewayIP(uint8_t out_gw[4]);
+
+
+/**
+ * Ethernet_subnetMask
+ *
+ * Retrieve the configured IPv4 subnet mask.
+ *
+ * Inputs:
+ *   out_mask - Pointer to a 4-byte buffer to receive the subnet mask
+ *
+ * Returns:
+ *   true if a valid subnet mask was written
+ *   false if Ethernet is not initialized or out_mask is NULL
+ *
+ * Preconditions:
+ *   Ethernet_begin must have been called successfully
+ *
+ * Postconditions:
+ *   out_mask contains the configured subnet mask on success
+ */
+bool Ethernet_subnetMask(uint8_t out_mask[4]);
+
 
 #endif /* ETHERNET_H */

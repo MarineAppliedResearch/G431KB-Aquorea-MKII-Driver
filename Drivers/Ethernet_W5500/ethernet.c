@@ -81,3 +81,57 @@ bool Ethernet_localIP(uint8_t out_ip[4])
     // Query the driver for the active IP address
     return wizchip_driver_get_ip(&eth_driver, out_ip);
 }
+
+
+/**
+ * Retrieve the configured IPv4 gateway address.
+ *
+ * This function queries the underlying WIZnet driver for the current
+ * network configuration and extracts only the gateway address. It is
+ * intentionally read-only and has no side effects.
+ */
+bool Ethernet_gatewayIP(uint8_t out_gw[4])
+{
+	// Ethernet must be initialized and output buffer must be valid
+	if (!eth_initialized || !out_gw)
+		return false;
+
+	WizchipNetConfig info;
+
+	// Query the driver for the active network configuration
+	// Failure indicates the network stack is not ready
+	if (!wizchip_driver_get_netinfo(&eth_driver, &info))
+		return false;
+
+	// Copy only the gateway address requested by the caller
+	memcpy(out_gw, info.gateway, 4);
+
+	return true;
+}
+
+
+/**
+ * Retrieve the configured IPv4 subnet mask.
+ *
+ * This function queries the underlying WIZnet driver for the current
+ * network configuration and extracts only the subnet mask. It is
+ * read-only and does not modify driver or hardware state.
+ */
+bool Ethernet_subnetMask(uint8_t out_mask[4])
+{
+	// Ethernet must be initialized and output buffer must be valid
+	if (!eth_initialized || !out_mask)
+		return false;
+
+	WizchipNetConfig info;
+
+	// Query the driver for the active network configuration
+	// Failure indicates the network stack is not ready
+	if (!wizchip_driver_get_netinfo(&eth_driver, &info))
+		return false;
+
+	// Copy only the subnet mask requested by the caller
+	memcpy(out_mask, info.subnet, 4);
+
+	return true;
+}

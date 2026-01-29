@@ -371,32 +371,34 @@ while (1) {}
 	       }
 	       else if (c == 'l')
 	       {
-	    	   /*
-	           if (wizchip_driver_link_up(&eth_driver))
-	               Serial_print(&SerialUSB, "Ethernet link: UP\r\n");
-	           else
-	               Serial_print(&SerialUSB, "Ethernet link: DOWN\r\n");
-	               */
+	    	   if (Ethernet_linkUp())
+	    	       Serial_println(&SerialUSB, "Ethernet Link UP");
+	    	   else
+	    	       Serial_println(&SerialUSB, "Ethernet Link DOWN");
 	       }
 	       else if (c == 'i')
 	       {
-	    	   /*
-	           wiz_NetInfo info;
+	           uint8_t ip[4];
+	           uint8_t gw[4];
+	           uint8_t mask[4];
 	           char buf[128];
 
-	           if (wizchip_driver_get_netinfo(&eth_driver, &info))
+	           if (Ethernet_localIP(ip) &&
+	               Ethernet_gatewayIP(gw) &&
+	               Ethernet_subnetMask(mask))
 	           {
 	               snprintf(buf, sizeof(buf),
-	                        "IP %d.%d.%d.%d  GW %d.%d.%d.%d\r\n",
-	                        info.ip[0], info.ip[1], info.ip[2], info.ip[3],
-	                        info.gw[0], info.gw[1], info.gw[2], info.gw[3]);
+	                        "IP %d.%d.%d.%d  GW %d.%d.%d.%d  MASK %d.%d.%d.%d\r\n",
+	                        ip[0], ip[1], ip[2], ip[3],
+	                        gw[0], gw[1], gw[2], gw[3],
+	                        mask[0], mask[1], mask[2], mask[3]);
+
 	               Serial_print(&SerialUSB, buf);
 	           }
 	           else
 	           {
 	               Serial_print(&SerialUSB, "NetInfo unavailable\r\n");
 	           }
-	           */
 	       }
 	       else if (c == 'd')
 	       {
