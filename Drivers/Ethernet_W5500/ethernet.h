@@ -133,4 +133,25 @@ bool Ethernet_gatewayIP(uint8_t out_gw[4]);
 bool Ethernet_subnetMask(uint8_t out_mask[4]);
 
 
+/**
+ * Ethernet_macAddress
+ *
+ * Retrieve the configured MAC address.
+ *
+ * Inputs:
+ *   out_mac - Pointer to a 6-byte buffer to receive the MAC address
+ *
+ * Returns:
+ *   true if a valid MAC address was written
+ *   false if Ethernet is not initialized or out_mac is NULL
+ *
+ * Preconditions:
+ *   Ethernet_begin must have been called successfully
+ *
+ * Postconditions:
+ *   out_mac contains the configured MAC address on success
+ */
+bool Ethernet_macAddress(uint8_t out_mac[6]);
+
+
 #endif /* ETHERNET_H */

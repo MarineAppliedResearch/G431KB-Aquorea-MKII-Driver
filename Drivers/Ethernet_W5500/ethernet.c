@@ -135,3 +135,30 @@ bool Ethernet_subnetMask(uint8_t out_mask[4])
 
 	return true;
 }
+
+
+/**
+ * Retrieve the configured MAC address.
+ *
+ * This function queries the underlying WIZnet driver for the current
+ * network configuration and extracts only the MAC address. It is
+ * read-only and does not modify driver or hardware state.
+ */
+bool Ethernet_macAddress(uint8_t out_mac[6])
+{
+    // Ethernet must be initialized and output buffer must be valid
+    if (!eth_initialized || !out_mac)
+        return false;
+
+    WizchipNetConfig info;
+
+    // Query the driver for the active network configuration
+    // Failure indicates the network stack is not ready
+    if (!wizchip_driver_get_netinfo(&eth_driver, &info))
+        return false;
+
+    // Copy only the MAC address requested by the caller
+    memcpy(out_mac, info.mac, 6);
+
+    return true;
+}

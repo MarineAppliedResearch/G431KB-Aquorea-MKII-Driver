@@ -381,17 +381,24 @@ while (1) {}
 	           uint8_t ip[4];
 	           uint8_t gw[4];
 	           uint8_t mask[4];
-	           char buf[128];
+	           uint8_t mac[6];
+	           char buf[160];
 
 	           if (Ethernet_localIP(ip) &&
 	               Ethernet_gatewayIP(gw) &&
-	               Ethernet_subnetMask(mask))
+	               Ethernet_subnetMask(mask) &&
+	               Ethernet_macAddress(mac))
 	           {
 	               snprintf(buf, sizeof(buf),
-	                        "IP %d.%d.%d.%d  GW %d.%d.%d.%d  MASK %d.%d.%d.%d\r\n",
+	                        "IP %d.%d.%d.%d  "
+	                        "GW %d.%d.%d.%d  "
+	                        "MASK %d.%d.%d.%d  "
+	                        "MAC %02X:%02X:%02X:%02X:%02X:%02X\r\n",
 	                        ip[0], ip[1], ip[2], ip[3],
 	                        gw[0], gw[1], gw[2], gw[3],
-	                        mask[0], mask[1], mask[2], mask[3]);
+	                        mask[0], mask[1], mask[2], mask[3],
+	                        mac[0], mac[1], mac[2],
+	                        mac[3], mac[4], mac[5]);
 
 	               Serial_print(&SerialUSB, buf);
 	           }
