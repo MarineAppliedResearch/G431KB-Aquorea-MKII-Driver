@@ -110,6 +110,31 @@ static void wizchip_spi_writebyte(uint8_t byte)
 
 
 /**
+ * wizchip_spi_readburst
+ *
+ * SPI burst-read callback for WIZnet ioLibrary.
+ */
+static void wizchip_spi_readburst(uint8_t *pBuf, uint16_t len)
+{
+    uint8_t dummy[len];
+    memset(dummy, 0xFF, len);
+
+    HAL_SPI_TransmitReceive(&hspi3, dummy, pBuf, len, HAL_MAX_DELAY);
+}
+
+
+/**
+ * wizchip_spi_writeburst
+ *
+ * SPI burst-write callback for WIZnet ioLibrary.
+ */
+static void wizchip_spi_writeburst(uint8_t *pBuf, uint16_t len)
+{
+    HAL_SPI_Transmit(&hspi3, pBuf, len, HAL_MAX_DELAY);
+}
+
+
+/**
  * wizchip_port_reset
  *
  * Perform a hardware reset of the W5500.
@@ -176,10 +201,15 @@ bool wizchip_port_init(void)
     /* Register SPI byte-level callbacks */
     reg_wizchip_spi_cbfunc(wizchip_spi_readbyte, wizchip_spi_writebyte);
 
-    // REQUIRED
+    /* Register SPI multi-byte callbacks */
+    reg_wizchip_spiburst_cbfunc(wizchip_spi_readburst, wizchip_spi_writeburst);
+
+    /*
+    // REQUIRED- this is chip policy, the port layer must not do this:
     uint8_t txsize[8] = {2,2,2,2,2,2,2,2};
     uint8_t rxsize[8] = {2,2,2,2,2,2,2,2};
     wizchip_init(txsize, rxsize);
+    */
 
     /* Verify communication by reading the version register */
 
@@ -214,16 +244,3 @@ bool wizchip_port_init(void)
     return true;
 }
 
-static void wizchip_spi_readburst(uint8_t* pBuf, uint16_t len)
-{
-    uint8_t tx = 0xFF;
-    for (uint16_t i = 0; i < len; i++)
-        HAL_SPI_TransmitReceive(&hspi3, &tx, &pBuf[i], 1, HAL_MAX_DELAY);
-}
-
-static void wizchip_spi_writeburst(uint8_t* pBuf, uint16_t len)
-{
-    uint8_t rx;
-    for (uint16_t i = 0; i < len; i++)
-        HAL_SPI_TransmitReceive(&hspi3, &pBuf[i], &rx, 1, HAL_MAX_DELAY);
-}

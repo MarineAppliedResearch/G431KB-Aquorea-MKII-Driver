@@ -139,6 +139,9 @@ bool wizchip_driver_init(WizchipDriver *driver,
     if (logger)
         logger("Initializing W5500");
 
+
+    /* we don't need both ctlwizchip and wizchhip_init, we'll
+     * use wizchip_init as our signle source of truth
     // Allocate internal TX/RX memory for sockets
     // This must occur before any register or socket access
     uint8_t memsize[2][8] =
@@ -159,6 +162,13 @@ bool wizchip_driver_init(WizchipDriver *driver,
 
         return false;
     }
+
+    */
+
+    uint8_t txsize[8] = {2,2,2,2,2,2,2,2};
+    uint8_t rxsize[8] = {2,2,2,2,2,2,2,2};
+
+    wizchip_init(txsize, rxsize);
 
     // Read the VERSIONR register to confirm SPI communication
     version = getVERSIONR();
@@ -198,14 +208,9 @@ bool wizchip_driver_init(WizchipDriver *driver,
     // Abort if link never came up
     if (link != PHY_LINK_ON)
     {
-        // Enter error state on link failure
-        driver->state = WIZCHIP_STATE_ERROR;
-
-        // Report link failure
+        driver->state = WIZCHIP_STATE_WAIT_LINK;
         if (logger)
             logger("Ethernet link down");
-
-        return false;
     }
 
     // Confirm physical network connection
@@ -229,6 +234,11 @@ bool wizchip_driver_init(WizchipDriver *driver,
     	netinfo.dhcp = NETINFO_STATIC;
 
     	ctlnetwork(CN_SET_NETINFO, &netinfo);
+
+    	wiz_NetInfo verify;
+    	ctlnetwork(CN_GET_NETINFO, &verify);
+    	print_netinfo("NetInfo after SET", &verify);
+
 
         // Mark network as usable
         driver->network_up = true;
@@ -476,4 +486,29 @@ void wizchip_driver_request_dhcp(WizchipDriver *driver)
     // Report DHCP initiation if logging is enabled
     if (logger)
         logger("DHCP request issued");
+}
+
+
+void print_netinfo(const char *label, const wiz_NetInfo *ni)
+{
+    char buf[128];
+
+    snprintf(buf, sizeof(buf),
+        "%s\r\n"
+        "  MAC %02X:%02X:%02X:%02X:%02X:%02X\n"
+        "  IP  %d.%d.%d.%d\n"
+        "  SN  %d.%d.%d.%d\n"
+        "  GW  %d.%d.%d.%d\n"
+        "  DHCP/STATIC?: %s\n",
+        label,
+        ni->mac[0], ni->mac[1], ni->mac[2],
+        ni->mac[3], ni->mac[4], ni->mac[5],
+        ni->ip[0], ni->ip[1], ni->ip[2], ni->ip[3],
+        ni->sn[0], ni->sn[1], ni->sn[2], ni->sn[3],
+        ni->gw[0], ni->gw[1], ni->gw[2], ni->gw[3],
+        ni->dhcp == NETINFO_STATIC ? "STATIC" : "DHCP"
+    );
+
+    if (logger)
+        logger(buf);
 }
