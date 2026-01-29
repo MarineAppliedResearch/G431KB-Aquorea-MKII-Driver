@@ -25,8 +25,10 @@
 #include "serial.h"
 #include "subc_mkii.h"
 #include <stdio.h>
-#include "wizchip_driver.h"
-#include "wizchip_conf.h"
+//#include "wizchip_driver.h"
+//#include "wizchip_conf.h"
+#include "ethernet.h"
+#include "ethernet_udp.h"
 
 /* USER CODE END Includes */
 
@@ -75,11 +77,17 @@ SerialPort SerialUSB;
 SerialPort SerialLIGHT;
 SubcMkII light_driver;
 
+// UDP echo test instance
+static EthernetUDP udp;
+
+// Simple RX buffer for echo testing
+static uint8_t udp_rx_buf[256];
+
 // Create our Ethernet Driver
-WizchipDriver eth_driver;
+////WizchipDriver eth_driver;
 
 // Track if Ethernet has been initialized
-bool eth_initialized = false;
+////bool eth_initialized = false;
 
 
 static const WizchipNetConfig eth_cfg =
@@ -161,6 +169,29 @@ int main(void)
 
 
 
+  // Bring up Ethernet using the new abstraction
+  if (!Ethernet_begin(&eth_cfg))
+  {
+      Serial_print(&SerialUSB, "Ethernet init FAILED\r\n");
+  }
+  else
+  {
+      Serial_print(&SerialUSB, "Ethernet init OK\r\n");
+
+      // Start UDP listener on port 5000
+      if (EthernetUDP_begin(&udp, 5000))
+      {
+          Serial_print(&SerialUSB, "UDP echo listening on port 5000\r\n");
+      }
+      else
+      {
+          Serial_print(&SerialUSB, "UDP begin FAILED\r\n");
+      }
+  }
+
+
+  EthernetUDP_set_logger(wiznet_log);
+
 
 
  // SPI DEBUG CODE, same as getVERSION
@@ -202,6 +233,7 @@ while (1) {}
 
 
   // Attach logger callbacks for Ethernet bring-up diagnostics
+  /*
   wizchip_port_set_logger(wiznet_log);
   wizchip_driver_set_logger(wiznet_log);
 
@@ -215,6 +247,7 @@ while (1) {}
   {
       Serial_print(&SerialUSB, "W5500 init FAILED\r\n");
   }
+  */
 
   /* USER CODE END 2 */
 
@@ -226,11 +259,38 @@ while (1) {}
 	   subc_mkii_poll(&light_driver, HAL_GetTick());
 
 
+
+	   // UDP echo test
+	   int packet_size = EthernetUDP_parsePacket(&udp);
+	   if (packet_size > 0)
+	   {
+	       int len = EthernetUDP_read(&udp,
+	                                  udp_rx_buf,
+	                                  sizeof(udp_rx_buf));
+
+	       if (len > 0)
+	       {
+	           // Begin Arduino-style packet back to sender
+	           if (EthernetUDP_beginPacket(&udp,
+	                                       udp.remote_ip,
+	                                       udp.remote_port))
+	           {
+	               // Write payload into TX buffer
+	               EthernetUDP_write(&udp, udp_rx_buf, (size_t)len);
+
+	               // Transmit echoed packet
+	               EthernetUDP_endPacket(&udp);
+	           }
+	       }
+	   }
+
+/*
 	   if (eth_initialized)
 	   {
 		   // Run the ethernet driver
 	       wizchip_driver_poll(&eth_driver, HAL_GetTick());
 	   }
+*/
 
 
 	   if (Serial_available(&SerialUSB) > 0)
@@ -304,20 +364,23 @@ while (1) {}
 	       }
 	       else if (c == 'e')
 	       {
-	           char buf[128];
+	           ////char buf[128];
 
-	           wizchip_driver_get_status(&eth_driver, buf, sizeof(buf));
-	           Serial_print(&SerialUSB, buf);
+	           ////wizchip_driver_get_status(&eth_driver, buf, sizeof(buf));
+	           ////Serial_print(&SerialUSB, buf);
 	       }
 	       else if (c == 'l')
 	       {
+	    	   /*
 	           if (wizchip_driver_link_up(&eth_driver))
 	               Serial_print(&SerialUSB, "Ethernet link: UP\r\n");
 	           else
 	               Serial_print(&SerialUSB, "Ethernet link: DOWN\r\n");
+	               */
 	       }
 	       else if (c == 'i')
 	       {
+	    	   /*
 	           wiz_NetInfo info;
 	           char buf[128];
 
@@ -333,11 +396,14 @@ while (1) {}
 	           {
 	               Serial_print(&SerialUSB, "NetInfo unavailable\r\n");
 	           }
+	           */
 	       }
 	       else if (c == 'd')
 	       {
+	    	   /*
 	           wizchip_driver_request_dhcp(&eth_driver);
 	           Serial_print(&SerialUSB, "DHCP requested\r\n");
+	           */
 	       }
 	   }
 
