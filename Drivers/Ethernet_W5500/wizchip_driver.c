@@ -28,7 +28,7 @@
 //#include "ctlnetwork.h"
 #include "socket.h"
 #include "DHCP/dhcp.h"
-
+#include <stdio.h>
 #include <string.h>
 
 /* --------------------------------------------------------------------------
