@@ -37,6 +37,30 @@ typedef enum
     ETHERNET_LINK_UP
 } EthernetLinkStatus;
 
+
+/**
+ * Ethernet_Stats
+ *
+ * Global runtime statistics for the Ethernet interface.
+ *
+ * These counters track interface-level events and aggregate
+ * traffic across all sockets.
+ *
+ * All counters are monotonic and observational only.
+ */
+typedef struct
+{
+    uint32_t init_count;        // Number of successful Ethernet_begin calls
+    uint32_t init_failures;     // Failed initialization attempts
+
+    uint32_t link_up_events;    // Link DOWN → UP transitions
+    uint32_t link_down_events;  // Link UP → DOWN transitions
+
+    uint32_t rx_packets_total;  // Total packets received across all sockets
+    uint32_t tx_packets_total;  // Total packets transmitted across all sockets
+} Ethernet_Stats;
+
+
 /**
  * Ethernet_begin
  *
@@ -205,6 +229,21 @@ EthernetLinkStatus Ethernet_linkStatus(void);
  *   buf contains a null-terminated status string on success
  */
 bool Ethernet_status(char *buf, size_t len);
+
+
+/**
+ * Ethernet_getStats
+ *
+ * Retrieve a pointer to the global Ethernet statistics structure.
+ *
+ * Returns:
+ *   Pointer to a read-only Ethernet_Stats structure
+ *
+ * Notes:
+ *   The returned pointer remains valid for the lifetime of the program.
+ *   The caller must not modify the contents.
+ */
+const Ethernet_Stats *Ethernet_getStats(void);
 
 
 #endif /* ETHERNET_H */

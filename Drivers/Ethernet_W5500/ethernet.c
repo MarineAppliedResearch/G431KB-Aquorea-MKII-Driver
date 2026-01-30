@@ -28,6 +28,13 @@ static WizchipDriver eth_driver;
 // Used to guard all public API calls.
 static bool eth_initialized = false;
 
+// Global Ethernet interface statistics
+static Ethernet_Stats eth_stats;
+
+// Last observed physical link state
+static bool cached_link_up;
+static bool link_state_valid;
+
 
 /**
  * Initialize the Ethernet interface.
@@ -37,16 +44,22 @@ static bool eth_initialized = false;
  */
 bool Ethernet_begin(const WizchipNetConfig *cfg)
 {
-    // Reject invalid configuration pointer early
     if (!cfg)
         return false;
 
-    // Attempt to initialize the underlying W5500 driver
     if (!wizchip_driver_init(&eth_driver, cfg))
+    {
+        // Track failed initialization attempts
+        eth_stats.init_failures++;
         return false;
+    }
 
-    // Mark Ethernet as initialized for subsequent API calls
+    // Successful initialization
     eth_initialized = true;
+    eth_stats.init_count++;
+
+    ethernet_observe_link();
+
     return true;
 }
 
@@ -62,8 +75,8 @@ bool Ethernet_linkUp(void)
     if (!eth_initialized)
         return false;
 
-    // Delegate link status query to the driver layer
-    return wizchip_driver_link_up(&eth_driver);
+    ethernet_observe_link();
+    return cached_link_up;
 }
 
 
@@ -203,4 +216,41 @@ bool Ethernet_status(char *buf, size_t len)
 
     // Driver does not report failure; reaching here means success
     return true;
+}
+
+
+// Observe current link state and update stats if a transition is seen.
+// Called opportunistically from existing API entry points.
+void ethernet_observe_link(void)
+{
+    if (!eth_initialized)
+        return;
+
+    bool link_up = wizchip_driver_link_up(&eth_driver);
+
+    if (!link_state_valid)
+    {
+        cached_link_up = link_up;
+        link_state_valid = true;
+        return;
+    }
+
+    if (link_up && !cached_link_up)
+    {
+        eth_stats.link_up_events++;
+    }
+    else if (!link_up && cached_link_up)
+    {
+        eth_stats.link_down_events++;
+    }
+
+    cached_link_up = link_up;
+}
+
+/**
+ * Retrieve global Ethernet statistics.
+ */
+const Ethernet_Stats *Ethernet_getStats(void)
+{
+    return &eth_stats;
 }

@@ -28,10 +28,12 @@ static ethernet_udp_log_fn udp_logger = NULL;
 
 
 /**
- * Open and bind a UDP socket.
+ * EthernetUDP_begin
  *
- * This function initializes the EthernetUDP structure and opens
- * a hardware UDP socket bound to the specified local port.
+ * Initialize and bind a UDP socket to a local port.
+ *
+ * This function resets all socket state and statistics to ensure
+ * deterministic behavior across reinitialization.
  */
 bool EthernetUDP_begin(EthernetUDP *udp, uint16_t port)
 {
@@ -72,6 +74,17 @@ int EthernetUDP_parsePacket(EthernetUDP *udp)
     if (!udp || !udp->active)
         return 0;
 
+    ethernet_observe_link();   // observe link before RX logic
+
+    // Track how often the application polls for packets
+    udp->stats.parse_calls++;
+
+    // If leftover bytes exist, the previous packet was not fully consumed
+	if (udp->remaining > 0)
+	{
+		udp->stats.rx_truncated++;
+	}
+
     // If the previous packet was not fully read, discard remaining payload bytes.
     // This keeps packet boundaries well defined for the next packet.
     while (udp->remaining > 0)
@@ -101,6 +114,9 @@ int EthernetUDP_parsePacket(EthernetUDP *udp)
     udp->remaining = rx_size;
     udp->has_remote = false;
 
+    // Count successfully detected UDP packets
+    udp->stats.rx_packets++;
+
     return (int)udp->remaining;
 }
 
@@ -116,6 +132,9 @@ int EthernetUDP_read(EthernetUDP *udp, uint8_t *buf, size_t len)
     // Validate instance and ensure a packet is currently being read
     if (!udp || !udp->active || udp->remaining == 0 || !buf)
         return 0;
+
+    // Track application read attempts
+   udp->stats.read_calls++;
 
     // Clamp read length to remaining payload bytes
     if (len > udp->remaining)
@@ -134,7 +153,11 @@ int EthernetUDP_read(EthernetUDP *udp, uint8_t *buf, size_t len)
                        &udp->remote_port);
 
         if (ret <= 0)
-            return ret;
+		{
+			// recvfrom failure indicates an RX error
+			udp->stats.rx_errors++;
+			return ret;
+		}
 
         udp->has_remote = true;
     }
@@ -143,10 +166,17 @@ int EthernetUDP_read(EthernetUDP *udp, uint8_t *buf, size_t len)
         // After header is consumed, recv reads payload bytes only.
         ret = recv(udp->socket, buf, (uint16_t)len);
         if (ret <= 0)
-            return ret;
+		{
+			// recv failure indicates an RX error
+			udp->stats.rx_errors++;
+			return ret;
+		}
     }
 
     udp->remaining -= (uint16_t)ret;
+
+    // Account for payload bytes delivered to the application
+	udp->stats.rx_bytes += (uint32_t)ret;
 
 #if ETHERNET_UDP_DEBUG
     if (udp_logger && ret > 0)
@@ -178,8 +208,26 @@ int EthernetUDP_sendTo(EthernetUDP *udp,
     if (!udp || !udp->active || !buf || !ip)
         return -1;
 
+    ethernet_observe_link();   // observe link before TX attempt
+
+    // Track application send attempts
+	udp->stats.send_calls++;
+
     // Delegate transmission to the WIZnet ioLibrary
-    return sendto(udp->socket, buf, len, ip, port);
+	int ret = sendto(udp->socket, buf, len, ip, port);
+
+	if (ret < 0)
+	{
+		// sendto failure indicates a TX error
+		udp->stats.tx_errors++;
+		return ret;
+	}
+
+	// Packet accepted for transmission
+	udp->stats.tx_packets++;
+	udp->stats.tx_bytes += (uint32_t)ret;
+
+	return ret;
 }
 
 
@@ -336,4 +384,22 @@ int EthernetUDP_available(const EthernetUDP *udp)
         return 0;
 
     return (int)udp->remaining;
+}
+
+
+/**
+ * Retrieve a snapshot of per-socket UDP statistics.
+ *
+ * Statistics are copied out atomically and represent the state
+ * at the time of the call.
+ */
+bool EthernetUDP_getStats(const EthernetUDP *udp,
+                          EthernetUDP_Stats *out)
+{
+    if (!udp || !out || !udp->active)
+        return false;
+
+    // Copy statistics by value to preserve encapsulation
+    memcpy(out, &udp->stats, sizeof(*out));
+    return true;
 }

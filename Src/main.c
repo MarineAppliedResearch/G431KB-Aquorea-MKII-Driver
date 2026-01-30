@@ -346,8 +346,6 @@ while (1) {}
 	           {
 	               Serial_print(&SerialUSB, "Temp: no data\r\n");
 	           }
-	       }else if (c == 's'){
-
 	       }
 	       else if( c == 'm'){
 	    	   Serial_print(&SerialUSB, motd);
@@ -430,6 +428,49 @@ while (1) {}
 	           wizchip_driver_request_dhcp(&eth_driver);
 	           Serial_print(&SerialUSB, "DHCP requested\r\n");
 	           */
+	       }
+	       else if (c == 's')
+	       {
+	           char buf[512];
+
+	           /* ---------- Ethernet global stats ---------- */
+	           const Ethernet_Stats *eth = Ethernet_getStats();
+
+	           snprintf(buf, sizeof(buf),
+	                    "\r\nEthernet stats:\r\n"
+	                    "  Init OK:        %lu\r\n"
+	                    "  Init failures: %lu\r\n"
+	                    "  Link UP events: %lu\r\n"
+	                    "  Link DOWN events: %lu\r\n"
+	                    "  RX packets:    %lu\r\n"
+	                    "  TX packets:    %lu\r\n",
+	                    eth->init_count,
+	                    eth->init_failures,
+	                    eth->link_up_events,
+	                    eth->link_down_events,
+	                    eth->rx_packets_total,
+	                    eth->tx_packets_total);
+
+	           Serial_print(&SerialUSB, buf);
+
+	           /* ---------- UDP instance stats ---------- */
+	           snprintf(buf, sizeof(buf),
+	                    "\r\nUDP socket %u stats:\r\n"
+	                    "  RX packets: %lu\r\n"
+	                    "  RX bytes:   %lu\r\n"
+	                    "  RX errors:  %lu\r\n"
+	                    "  TX packets: %lu\r\n"
+	                    "  TX bytes:   %lu\r\n"
+	                    "  TX errors:  %lu\r\n",
+	                    udp.socket,
+	                    udp.stats.rx_packets,
+	                    udp.stats.rx_bytes,
+	                    udp.stats.rx_errors,
+	                    udp.stats.tx_packets,
+	                    udp.stats.tx_bytes,
+	                    udp.stats.tx_errors);
+
+	           Serial_print(&SerialUSB, buf);
 	       }
 	   }
 

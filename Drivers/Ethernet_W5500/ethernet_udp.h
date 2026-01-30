@@ -28,6 +28,43 @@
 
 #define ETHERNETUDP_TX_BUFFER_SIZE 1472
 
+/**
+ * EthernetUDP_Stats
+ *
+ * Runtime statistics for a single UDP socket instance.
+ *
+ * These counters are monotonically increasing and are intended
+ * for diagnostics, debugging, and performance analysis.
+ *
+ * All fields use uint32_t to ensure atomic access on Cortex-M
+ * and predictable wraparound behavior.
+ *
+ * Statistics are observational only and MUST NOT affect
+ * socket behavior or control flow.
+ */
+typedef struct
+{
+    // Packet-level counters
+    uint32_t rx_packets;     // Number of UDP packets successfully detected
+    uint32_t tx_packets;     // Number of UDP packets successfully transmitted
+
+    // Byte-level counters
+    uint32_t rx_bytes;       // Payload bytes delivered to the application
+    uint32_t tx_bytes;       // Payload bytes queued for transmission
+
+    // Error and anomaly tracking
+    uint32_t rx_truncated;   // Packets where payload exceeded user reads
+    uint32_t rx_errors;      // recv / recvfrom failures
+    uint32_t tx_errors;      // sendto failures
+
+    // Behavioral diagnostics (useful during bring-up)
+    uint32_t parse_calls;    // Number of calls to EthernetUDP_parsePacket()
+    uint32_t read_calls;     // Number of calls to EthernetUDP_read()
+    uint32_t send_calls;     // Number of send attempts
+} EthernetUDP_Stats;
+
+
+
 /*
  * EthernetUDP
  *
@@ -54,8 +91,12 @@ typedef struct
    uint8_t  tx_buf[ETHERNETUDP_TX_BUFFER_SIZE];
    uint16_t tx_len;       // Bytes currently buffered
    bool     tx_active;    // True between beginPacket() and endPacket()
+   EthernetUDP_Stats stats; // Per-socket runtime statistics
 
 } EthernetUDP;
+
+
+
 
 
 /* Debugger callback function */
@@ -274,4 +315,25 @@ bool EthernetUDP_remotePort(const EthernetUDP *udp, uint16_t *out_port);
  */
 int EthernetUDP_available(const EthernetUDP *udp);
 
+
+
+/**
+ * EthernetUDP_getStats
+ *
+ * Retrieve a snapshot of the UDP socket statistics.
+ *
+ * Inputs:
+ *   udp - Pointer to an initialized EthernetUDP instance
+ *   out - Destination buffer for statistics
+ *
+ * Returns:
+ *   true if statistics were copied successfully
+ *   false if inputs are invalid
+ *
+ * Notes:
+ *   This function copies statistics by value to avoid exposing
+ *   internal driver state or requiring synchronization.
+ */
+bool EthernetUDP_getStats(const EthernetUDP *udp,
+                          EthernetUDP_Stats *out);
 #endif /* ETHERNET_UDP_H */
