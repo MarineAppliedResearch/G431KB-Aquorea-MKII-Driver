@@ -107,3 +107,215 @@ if (EthernetUDP_begin(&udp, 5000))
 ```
 
 Each EthernetUDP instance owns exactly one W5500 hardware socket.
+
+---
+
+## Typical Main Loop Usage
+
+### Receiving Packets
+
+```c
+int packet_size = EthernetUDP_parsePacket(&udp);
+if (packet_size > 0)
+{
+    int len = EthernetUDP_read(&udp, rx_buf, sizeof(rx_buf));
+}
+```
+
+Semantics:
+
+- parsePacket detects packet boundaries
+- read drains payload bytes only
+- Packet metadata is latched on first read
+- No hidden buffering or callbacks
+
+---
+
+### Accessing Sender Metadata
+
+```c
+uint8_t remote_ip[4];
+uint16_t remote_port;
+
+EthernetUDP_remoteIP(&udp, remote_ip);
+EthernetUDP_remotePort(&udp, &remote_port);
+```
+
+Notes:
+
+- Metadata becomes valid after the first successful read
+- These accessors have no side effects
+
+---
+
+### Sending Packets
+
+```c
+EthernetUDP_beginPacket(&udp, remote_ip, remote_port);
+EthernetUDP_write(&udp, data, len);
+EthernetUDP_endPacket(&udp);
+```
+
+Behavior:
+
+- Buffered TX
+- Exact datagram boundaries
+- Silent truncation if buffer fills
+- Transmission occurs only at endPacket
+
+---
+
+## Runtime Statistics and Observability
+
+### Global Ethernet Statistics
+
+```c
+const Ethernet_Stats *stats = Ethernet_getStats();
+```
+
+Tracked metrics:
+
+- Initialization attempts and failures
+- Link up and down transitions
+- Total RX and TX packets
+- Total RX and TX bytes
+
+Design notes:
+
+- Counters are monotonic
+- Observational only
+- Safe to read at any time
+- Useful during failure analysis
+
+---
+
+### Per UDP Socket Statistics
+
+Each EthernetUDP instance tracks:
+
+- RX and TX packets
+- RX and TX bytes
+- RX truncations
+- RX and TX errors
+- parse, read, and send call counts
+
+```c
+EthernetUDP_Stats udp_stats;
+EthernetUDP_getStats(&udp, &udp_stats);
+```
+
+Statistics are copied by value to preserve encapsulation.
+
+---
+
+## Internal Architecture
+
+### Layered Design
+
+```
+Application Code
+    |
+Ethernet / EthernetUDP
+    |
+wizchip_driver
+    |
+wizchip_port
+    |
+STM32 HAL (SPI, GPIO)
+```
+
+---
+
+### wizchip_port
+
+Responsibilities:
+
+- SPI byte and burst primitives
+- Chip select control
+- Hardware reset timing
+- ioLibrary callback registration
+
+Design intent:
+
+- All board specific code lives here
+- Porting to another board or SPI bus is isolated
+
+---
+
+### wizchip_driver
+
+Responsibilities:
+
+- W5500 bring up and verification
+- Internal memory configuration
+- PHY link monitoring
+- Static IP or DHCP configuration
+- High level driver state machine
+
+Design intent:
+
+- No socket exposure
+- No application logic
+- Bounded blocking during init, polling afterward
+
+---
+
+### Ethernet (Global Singleton)
+
+Responsibilities:
+
+- Arduino style global Ethernet interface
+- Initialization guarding
+- Link transition observation
+- Global traffic statistics
+
+Design intent:
+
+- Exactly one Ethernet interface
+- No socket management
+- Clean separation from transport logic
+
+---
+
+### EthernetUDP
+
+Responsibilities:
+
+- Own exactly one hardware socket
+- UDP RX and TX
+- Arduino compatible semantics
+- Per socket statistics
+
+Design intent:
+
+- No background servicing
+- Strict packet boundaries
+- Minimal hidden behavior
+
+---
+
+## Known Limitations
+
+- Fixed socket index (currently socket 0)
+- No dynamic socket allocation yet
+- UDP only (no TCP support)
+- No RTOS specific integration
+- No power management hooks
+
+---
+
+## Future Directions
+
+- Dynamic socket allocation
+- TCP support
+- Multiple simultaneous UDP sockets
+- Improved DHCP robustness
+- Optional RTOS integration hooks
+
+---
+
+## License
+
+MIT License
+
+Developed at Marine Applied Research & Exploration.
