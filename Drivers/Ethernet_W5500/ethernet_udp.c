@@ -21,10 +21,17 @@
 #include "ethernet_udp.h"
 #include "socket.h"
 #include <string.h>
+#include "ethernet.h"
 
 static ethernet_udp_log_fn udp_logger = NULL;
 
 #define ETHERNET_UDP_DEBUG 0
+
+
+
+// Internal Ethernet stats hooks (not part of public API)
+void ethernet_record_tx(uint32_t bytes);
+void ethernet_record_rx(uint32_t bytes);
 
 
 /**
@@ -101,6 +108,7 @@ int EthernetUDP_parsePacket(EthernetUDP *udp)
             break;
 
         udp->remaining -= (uint16_t)n;
+
     }
 
     // Detect presence of a new UDP packet payload in RX buffer.
@@ -116,6 +124,7 @@ int EthernetUDP_parsePacket(EthernetUDP *udp)
 
     // Count successfully detected UDP packets
     udp->stats.rx_packets++;
+
 
     return (int)udp->remaining;
 }
@@ -177,6 +186,7 @@ int EthernetUDP_read(EthernetUDP *udp, uint8_t *buf, size_t len)
 
     // Account for payload bytes delivered to the application
 	udp->stats.rx_bytes += (uint32_t)ret;
+    ethernet_record_rx((uint32_t)ret);
 
 #if ETHERNET_UDP_DEBUG
     if (udp_logger && ret > 0)
@@ -226,6 +236,10 @@ int EthernetUDP_sendTo(EthernetUDP *udp,
 	// Packet accepted for transmission
 	udp->stats.tx_packets++;
 	udp->stats.tx_bytes += (uint32_t)ret;
+
+	// Increment Global Ethernet statistics
+	ethernet_record_tx((uint32_t)ret);
+
 
 	return ret;
 }

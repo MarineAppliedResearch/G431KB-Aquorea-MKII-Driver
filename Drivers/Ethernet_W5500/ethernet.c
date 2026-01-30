@@ -58,6 +58,8 @@ bool Ethernet_begin(const WizchipNetConfig *cfg)
     eth_initialized = true;
     eth_stats.init_count++;
 
+
+
     ethernet_observe_link();
 
     return true;
@@ -253,4 +255,28 @@ void ethernet_observe_link(void)
 const Ethernet_Stats *Ethernet_getStats(void)
 {
     return &eth_stats;
+}
+
+
+/**
+ * Record transmitted packet and byte counts.
+ *
+ * Called internally by transport layers (UDP, TCP).
+ */
+void ethernet_record_tx(uint32_t bytes)
+{
+    eth_stats.tx_packets_total++;
+    eth_stats.tx_bytes_total += bytes;
+}
+
+
+/**
+ * Record transmitted packet and byte counts.
+ *
+ * Called internally by transport layers (UDP, TCP).
+ */
+void ethernet_record_rx(uint32_t bytes)
+{
+    eth_stats.rx_packets_total++;
+    eth_stats.rx_bytes_total += bytes;
 }

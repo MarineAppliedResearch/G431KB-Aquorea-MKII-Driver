@@ -277,15 +277,62 @@ while (1) {}
 	           if (EthernetUDP_remoteIP(&udp, remote_ip) &&
 	               EthernetUDP_remotePort(&udp, &remote_port))
 	           {
+
+
+
+
 	               // Begin Arduino-style packet back to sender
 	               if (EthernetUDP_beginPacket(&udp,
 	                                           remote_ip,
 	                                           remote_port))
 	               {
+
+	            	   char buf[512];
+
+	            	  	        	   	           /* ---------- Ethernet global stats ---------- */
+	            	  	        	   	           const Ethernet_Stats *eth = Ethernet_getStats();
+
+	            	  	        	   	           int len2 = snprintf(buf, sizeof(buf),
+	            	  	        		                    "\r\nEthernet stats:\r\n"
+	            	  	        		                    "  Init OK:        %lu\r\n"
+	            	  	        		                    "  Init failures: %lu\r\n"
+	            	  	        		                    "  Link UP events: %lu\r\n"
+	            	  	        		                    "  Link DOWN events: %lu\r\n"
+	            	  	        		                    "  RX packets:    %lu\r\n"
+	            	  	        		                    "  TX packets:    %lu\r\n"
+	            	  	        		                    "  RX bytes:      %lu\r\n"
+	            	  	        		                    "  TX bytes:      %lu\r\n",
+	            	  	        		                    eth->init_count,
+	            	  	        		                    eth->init_failures,
+	            	  	        		                    eth->link_up_events,
+	            	  	        		                    eth->link_down_events,
+	            	  	        		                    eth->rx_packets_total,
+	            	  	        		                    eth->tx_packets_total,
+	            	  	        		                    eth->rx_bytes_total,
+	            	  	        		                    eth->tx_bytes_total);
+
+	            	  	        	   	      // Write payload into TX buffer
+	            	  	        	   	      	                   EthernetUDP_write(&udp, buf,(size_t)len2);
+
+	            	  	        	   	           /* ---------- UDP instance stats ---------- */
+	            	  	        	   	      	            len2 = snprintf(buf, sizeof(buf),
+	            	  	        	   	                    "\r\nUDP socket %u stats:\n"
+	            	  	        	   	                    "  RX packets: %lu\n"
+	            	  	        	   	                    "  RX bytes:   %lu\n"
+	            	  	        	   	                    "  RX errors:  %lu\n"
+	            	  	        	   	                    "  TX packets: %lu\n"
+	            	  	        	   	                    "  TX bytes:   %lu\n"
+	            	  	        	   	                    "  TX errors:  %lu\n",
+	            	  	        	   	                    udp.socket,
+	            	  	        	   	                    udp.stats.rx_packets,
+	            	  	        	   	                    udp.stats.rx_bytes,
+	            	  	        	   	                    udp.stats.rx_errors,
+	            	  	        	   	                    udp.stats.tx_packets,
+	            	  	        	   	                    udp.stats.tx_bytes,
+	            	  	        	   	                    udp.stats.tx_errors);
+
 	                   // Write payload into TX buffer
-	                   EthernetUDP_write(&udp,
-	                                     udp_rx_buf,
-	                                     (size_t)len);
+	                   EthernetUDP_write(&udp, buf,(size_t)len2);
 
 	                   // Transmit echoed packet
 	                   EthernetUDP_endPacket(&udp);
@@ -443,13 +490,17 @@ while (1) {}
 	                    "  Link UP events: %lu\r\n"
 	                    "  Link DOWN events: %lu\r\n"
 	                    "  RX packets:    %lu\r\n"
-	                    "  TX packets:    %lu\r\n",
+	                    "  TX packets:    %lu\r\n"
+	                    "  RX bytes:      %lu\r\n"
+	                    "  TX bytes:      %lu\r\n",
 	                    eth->init_count,
 	                    eth->init_failures,
 	                    eth->link_up_events,
 	                    eth->link_down_events,
 	                    eth->rx_packets_total,
-	                    eth->tx_packets_total);
+	                    eth->tx_packets_total,
+	                    eth->rx_bytes_total,
+	                    eth->tx_bytes_total);
 
 	           Serial_print(&SerialUSB, buf);
 

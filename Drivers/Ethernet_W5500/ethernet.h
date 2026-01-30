@@ -58,6 +58,9 @@ typedef struct
 
     uint32_t rx_packets_total;  // Total packets received across all sockets
     uint32_t tx_packets_total;  // Total packets transmitted across all sockets
+
+    uint32_t tx_bytes_total;    // Total bytes transmitted across all sockets
+    uint32_t rx_bytes_total;    // Total bytes received across all sockets
 } Ethernet_Stats;
 
 
