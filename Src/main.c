@@ -92,10 +92,10 @@ static uint8_t udp_rx_buf[256];
 
 static const WizchipNetConfig eth_cfg =
 {
-    .mac     = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 },
-    .ip      = { 192, 168, 50, 3 },
+    .mac     = { 0xDE, 0xAD, 0xDA, 0xDD, 0xEA, 0x01 },
+    .ip      = { 10, 1, 10, 3 },
     .subnet  = { 255, 255, 255, 0 },
-    .gateway = { 192, 168, 50, 2 },
+    .gateway = { 10, 1, 10, 1 },
     .dns     = { 8, 8, 8, 8 },
     .mode    = WIZCHIP_NET_STATIC
 };
@@ -260,7 +260,8 @@ while (1) {}
 
 
 
-	   // UDP echo test using accessors only
+	   /* ---------------- UDP command handling ---------------- */
+
 	   int packet_size = EthernetUDP_parsePacket(&udp);
 	   if (packet_size > 0)
 	   {
@@ -273,69 +274,199 @@ while (1) {}
 	           uint8_t  remote_ip[4];
 	           uint16_t remote_port;
 
-	           // Retrieve sender metadata via accessors
 	           if (EthernetUDP_remoteIP(&udp, remote_ip) &&
 	               EthernetUDP_remotePort(&udp, &remote_port))
 	           {
+	               char c = (char)udp_rx_buf[0];   // SAME command model as Serial
+	               char buf[512];
+	               int  outlen = 0;
 
-
-
-
-	               // Begin Arduino-style packet back to sender
-	               if (EthernetUDP_beginPacket(&udp,
-	                                           remote_ip,
-	                                           remote_port))
+	               /* ---------- Brightness ---------- */
+	               if (c == '1')
 	               {
+	                   subc_mkii_set_brightness(&light_driver, 100);
+	                   outlen = snprintf(buf, sizeof(buf),
+	                                     "Brightness set to 100\r\n");
+	               }
+	               else if (c == '0')
+	               {
+	                   subc_mkii_set_brightness(&light_driver, 0);
+	                   outlen = snprintf(buf, sizeof(buf),
+	                                     "Brightness set to 0\r\n");
+	               }
 
-	            	   char buf[512];
+	               /* ---------- Temperature ---------- */
+	               else if (c == 't')
+	               {
+	                   uint32_t t_cur, t_min, t_max, t_avg;
 
-	            	  	        	   	           /* ---------- Ethernet global stats ---------- */
-	            	  	        	   	           const Ethernet_Stats *eth = Ethernet_getStats();
+	                   if (subc_mkii_get_temperature_stats(&light_driver,
+	                                                       &t_min,
+	                                                       &t_max,
+	                                                       &t_avg,
+	                                                       &t_cur))
+	                   {
+	                       outlen = snprintf(buf, sizeof(buf),
+	                           "Temp C:%ld.%02ld  Min:%ld.%02ld  Max:%ld.%02ld  Avg:%ld.%02ld\r\n",
+	                           t_cur / 100,  abs(t_cur % 100),
+	                           t_min / 100,  abs(t_min % 100),
+	                           t_max / 100,  abs(t_max % 100),
+	                           t_avg / 100,  abs(t_avg % 100));
+	                   }
+	                   else
+	                   {
+	                       outlen = snprintf(buf, sizeof(buf),
+	                                         "Temp: no data\r\n");
+	                   }
+	               }
 
-	            	  	        	   	           int len2 = snprintf(buf, sizeof(buf),
-	            	  	        		                    "\r\nEthernet stats:\r\n"
-	            	  	        		                    "  Init OK:        %lu\r\n"
-	            	  	        		                    "  Init failures: %lu\r\n"
-	            	  	        		                    "  Link UP events: %lu\r\n"
-	            	  	        		                    "  Link DOWN events: %lu\r\n"
-	            	  	        		                    "  RX packets:    %lu\r\n"
-	            	  	        		                    "  TX packets:    %lu\r\n"
-	            	  	        		                    "  RX bytes:      %lu\r\n"
-	            	  	        		                    "  TX bytes:      %lu\r\n",
-	            	  	        		                    eth->init_count,
-	            	  	        		                    eth->init_failures,
-	            	  	        		                    eth->link_up_events,
-	            	  	        		                    eth->link_down_events,
-	            	  	        		                    eth->rx_packets_total,
-	            	  	        		                    eth->tx_packets_total,
-	            	  	        		                    eth->rx_bytes_total,
-	            	  	        		                    eth->tx_bytes_total);
+	               /* ---------- MOTD ---------- */
+	               else if (c == 'm')
+	               {
+	                   outlen = snprintf(buf, sizeof(buf), "%s", motd);
+	               }
 
-	            	  	        	   	      // Write payload into TX buffer
-	            	  	        	   	      	                   EthernetUDP_write(&udp, buf,(size_t)len2);
+	               /* ---------- Uptime ---------- */
+	               else if (c == 'u')
+	               {
+	                   uint32_t uptime_ms;
 
-	            	  	        	   	           /* ---------- UDP instance stats ---------- */
-	            	  	        	   	      	            len2 = snprintf(buf, sizeof(buf),
-	            	  	        	   	                    "\r\nUDP socket %u stats:\n"
-	            	  	        	   	                    "  RX packets: %lu\n"
-	            	  	        	   	                    "  RX bytes:   %lu\n"
-	            	  	        	   	                    "  RX errors:  %lu\n"
-	            	  	        	   	                    "  TX packets: %lu\n"
-	            	  	        	   	                    "  TX bytes:   %lu\n"
-	            	  	        	   	                    "  TX errors:  %lu\n",
-	            	  	        	   	                    udp.socket,
-	            	  	        	   	                    udp.stats.rx_packets,
-	            	  	        	   	                    udp.stats.rx_bytes,
-	            	  	        	   	                    udp.stats.rx_errors,
-	            	  	        	   	                    udp.stats.tx_packets,
-	            	  	        	   	                    udp.stats.tx_bytes,
-	            	  	        	   	                    udp.stats.tx_errors);
+	                   if (subc_mkii_get_uptime(&light_driver, &uptime_ms))
+	                   {
+	                       uint32_t seconds = uptime_ms / 1000;
+	                       uint32_t minutes = seconds / 60;
+	                       uint32_t hours   = minutes / 60;
 
-	                   // Write payload into TX buffer
-	                   EthernetUDP_write(&udp, buf,(size_t)len2);
+	                       outlen = snprintf(buf, sizeof(buf),
+	                                         "Uptime: %lu:%02lu:%02lu\r\n",
+	                                         hours,
+	                                         minutes % 60,
+	                                         seconds % 60);
+	                   }
+	               }
 
-	                   // Transmit echoed packet
-	                   EthernetUDP_endPacket(&udp);
+	               /* ---------- Ethernet status ---------- */
+	               else if (c == 'e')
+	               {
+	                   if (Ethernet_status(buf, sizeof(buf)))
+	                       outlen = strlen(buf);
+	                   else
+	                       outlen = snprintf(buf, sizeof(buf),
+	                                         "Ethernet status unavailable\r\n");
+	               }
+
+	               /* ---------- Link status ---------- */
+	               else if (c == 'l')
+	               {
+	                   EthernetLinkStatus st = Ethernet_linkStatus();
+
+	                   if (st == ETHERNET_LINK_UP)
+	                       outlen = snprintf(buf, sizeof(buf),
+	                                         "Ethernet Link: UP\r\n");
+	                   else if (st == ETHERNET_LINK_DOWN)
+	                       outlen = snprintf(buf, sizeof(buf),
+	                                         "Ethernet Link: DOWN\r\n");
+	                   else
+	                       outlen = snprintf(buf, sizeof(buf),
+	                                         "Ethernet Link: UNKNOWN\r\n");
+	               }
+
+	               /* ---------- Network info ---------- */
+	               else if (c == 'i')
+	               {
+	                   uint8_t ip[4], gw[4], mask[4], mac[6];
+
+	                   if (Ethernet_localIP(ip) &&
+	                       Ethernet_gatewayIP(gw) &&
+	                       Ethernet_subnetMask(mask) &&
+	                       Ethernet_macAddress(mac))
+	                   {
+	                       outlen = snprintf(buf, sizeof(buf),
+	                           "IP %d.%d.%d.%d  "
+	                           "GW %d.%d.%d.%d  "
+	                           "MASK %d.%d.%d.%d  "
+	                           "MAC %02X:%02X:%02X:%02X:%02X:%02X\r\n",
+	                           ip[0], ip[1], ip[2], ip[3],
+	                           gw[0], gw[1], gw[2], gw[3],
+	                           mask[0], mask[1], mask[2], mask[3],
+	                           mac[0], mac[1], mac[2],
+	                           mac[3], mac[4], mac[5]);
+	                   }
+	                   else
+	                   {
+	                       outlen = snprintf(buf, sizeof(buf),
+	                                         "NetInfo unavailable\r\n");
+	                   }
+	               }
+
+	               /* ---------- STATS (SPECIAL CASE) ---------- */
+	               else if (c == 's')
+	               {
+	                   if (EthernetUDP_beginPacket(&udp, remote_ip, remote_port))
+	                   {
+	                       /* ---------- Ethernet global stats ---------- */
+	                       const Ethernet_Stats *eth = Ethernet_getStats();
+
+	                       int len2 = snprintf(buf, sizeof(buf),
+	                           "\r\nEthernet stats:\r\n"
+	                           "  Init OK:        %lu\r\n"
+	                           "  Init failures: %lu\r\n"
+	                           "  Link UP events: %lu\r\n"
+	                           "  Link DOWN events: %lu\r\n"
+	                           "  RX packets:    %lu\r\n"
+	                           "  TX packets:    %lu\r\n"
+	                           "  RX bytes:      %lu\r\n"
+	                           "  TX bytes:      %lu\r\n",
+	                           eth->init_count,
+	                           eth->init_failures,
+	                           eth->link_up_events,
+	                           eth->link_down_events,
+	                           eth->rx_packets_total,
+	                           eth->tx_packets_total,
+	                           eth->rx_bytes_total,
+	                           eth->tx_bytes_total);
+
+	                       EthernetUDP_write(&udp, buf, (size_t)len2);
+
+	                       /* ---------- UDP instance stats ---------- */
+	                       len2 = snprintf(buf, sizeof(buf),
+	                           "\r\nUDP socket %u stats:\n"
+	                           "  RX packets: %lu\n"
+	                           "  RX bytes:   %lu\n"
+	                           "  RX errors:  %lu\n"
+	                           "  TX packets: %lu\n"
+	                           "  TX bytes:   %lu\n"
+	                           "  TX errors:  %lu\n",
+	                           udp.socket,
+	                           udp.stats.rx_packets,
+	                           udp.stats.rx_bytes,
+	                           udp.stats.rx_errors,
+	                           udp.stats.tx_packets,
+	                           udp.stats.tx_bytes,
+	                           udp.stats.tx_errors);
+
+	                       EthernetUDP_write(&udp, buf, (size_t)len2);
+	                       EthernetUDP_endPacket(&udp);
+	                   }
+
+	                   continue;   // DO NOT fall through to generic send
+	               }
+
+	               /* ---------- Unknown command ---------- */
+	               else
+	               {
+	                   outlen = snprintf(buf, sizeof(buf),
+	                                     "Unknown cmd '%c'\r\n", udp_rx_buf);
+	               }
+
+	               /* ---------- Generic UDP reply ---------- */
+	               if (outlen > 0)
+	               {
+	                   if (EthernetUDP_beginPacket(&udp, remote_ip, remote_port))
+	                   {
+	                       EthernetUDP_write(&udp, buf, (size_t)outlen);
+	                       EthernetUDP_endPacket(&udp);
+	                   }
 	               }
 	           }
 	       }
@@ -623,7 +754,7 @@ static void MX_SPI3_Init(void)
   hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi3.Init.CRCPolynomial = 7;
   hspi3.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi3.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  hspi3.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
   if (HAL_SPI_Init(&hspi3) != HAL_OK)
   {
     Error_Handler();
@@ -747,24 +878,17 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SPI3_CS_GPIO_Port, SPI3_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, SPI3_CS_Pin|SPI3_RESET_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SPI3_RESET_GPIO_Port, SPI3_RESET_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : SPI3_CS_Pin */
-  GPIO_InitStruct.Pin = SPI3_CS_Pin;
+  /*Configure GPIO pins : SPI3_CS_Pin SPI3_RESET_Pin */
+  GPIO_InitStruct.Pin = SPI3_CS_Pin|SPI3_RESET_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(SPI3_CS_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SPI3_RESET_Pin */
-  GPIO_InitStruct.Pin = SPI3_RESET_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(SPI3_RESET_GPIO_Port, &GPIO_InitStruct);
+  /**/
+  __HAL_SYSCFG_FASTMODEPLUS_ENABLE(SYSCFG_FASTMODEPLUS_PB6);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

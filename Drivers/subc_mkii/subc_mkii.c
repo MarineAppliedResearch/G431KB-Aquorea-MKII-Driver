@@ -24,7 +24,7 @@
 
 
 
-
+extern SerialPort SerialUSB;
 
 /* --------------------------------------------------------------------------
  * Public Functions
@@ -131,6 +131,8 @@ void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms)
         if (c < 0)
             break;
 
+        ////Serial_println(&SerialUSB, (uint8_t)c);
+
         // If we have not filled up our driver buffer, copy that byte into it, drop otherwise.
         if (driver->response_len < SUBC_MKII_RESPONSE_BUF_SIZE)
         {
@@ -143,7 +145,6 @@ void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms)
 
     /* If an exclusive command is active, check for response completion */
     if (driver->cmd_state == SUBC_CMD_EXCLUSIVE_ACTIVE &&
-        driver->response_len > 0 &&
         (now_ms - driver->last_rx_time_ms) >= SUBC_MKII_RESPONSE_TIMEOUT_MS)
     {
         /* Null-terminate so we can safely treat it as a string */
@@ -151,6 +152,8 @@ void subc_mkii_poll(SubcMkII *driver, uint32_t now_ms)
         {
             driver->response_buf[driver->response_len] = '\0';
         }
+
+
 
         /* If this was a temperature request, parse it */
         subc_mkii_parse_temperature(driver);
@@ -282,6 +285,9 @@ void subc_mkii_request_temperature_internal(SubcMkII *driver,
     driver->cmd_state      = SUBC_CMD_EXCLUSIVE_ACTIVE;
     driver->last_temp_request_ms = now_ms;
 
+    /* Establish timeout reference even if no bytes arrive */
+    driver->last_rx_time_ms = now_ms;
+
     /* Send temperature request command */
     Serial_print(driver->light_serial, "$St");
 }
@@ -298,6 +304,7 @@ void subc_mkii_parse_temperature(SubcMkII *driver)
     // Validate driver pointer before accessing internal state
     if (!driver)
         return;
+
 
     // Search the response buffer for the "Temp:" field
     char *p = strstr((char *)driver->response_buf, "Temp:");
