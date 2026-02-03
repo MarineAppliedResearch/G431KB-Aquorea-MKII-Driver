@@ -44,14 +44,17 @@ extern "C" {
  * -------------------------------------------------------------------------- */
 
 /* Maximum number of bytes we will store for a single light response */
-#define SUBC_MKII_RESPONSE_BUF_SIZE 256
-
-/* Quiet time (in milliseconds) that indicates the end of a response.
- * This value will be tuned with real hardware testing. */
-#define SUBC_MKII_RESPONSE_TIMEOUT_MS 5
+#define SUBC_MKII_RESPONSE_BUF_SIZE 512
 
 /* How many milliseconds the driver waits between querying the temp. */
 #define SUBC_MKII_TEMP_REQUEST_INTERVAL_MS 10000
+
+// Preferred quiet gap before we attempt parsing.
+#define SUBC_MKII_SILENCE_TIMEOUT_MS   5
+
+// Absolute maximum time we allow a buffer to accumulate before we force
+// one parse attempt and clear it, even if the light never goes silent.
+#define SUBC_MKII_MAX_WINDOW_MS       50
 
 
 /* --------------------------------------------------------------------------
@@ -88,6 +91,9 @@ typedef struct
     /* Serial interface connected to the light */
     SerialPort *light_serial;
 
+    // Optional debug output
+    SerialPort *debug_serial;
+
     /* Current exclusive command state */
     SubcCommandState cmd_state;
 
@@ -99,10 +105,11 @@ typedef struct
     uint16_t response_len;
 
     /* Timestamp of the most recent received byte (ms) */
-    uint32_t last_rx_time_ms;
+    uint32_t first_rx_time_ms;   // when current accumulation started
+    uint32_t last_rx_time_ms;    // when last byte was received
 
     /* ------------------------------------------------------------------
-	 * Temperature tracking
+	 * Environment tracking
 	 * ------------------------------------------------------------------ */
 
 	/* Most recently received temperature (degrees C) */
@@ -123,6 +130,30 @@ typedef struct
 	/* Timestamp of last temperature request */
 	uint32_t last_temp_request_ms;
 
+	/* Most recently received temperature (degrees C) */
+	int32_t humidity_current;
+
+	/* Lowest temperature observed since init */
+	int32_t humidity_min;
+
+	/* Highest temperature observed since init */
+	int32_t humidity_max;
+
+	/* Running sum of temperatures for averaging, int64_t allows running for years without reset */
+	int64_t humidity_sum;
+
+	/* Number of temperature samples collected */
+	uint32_t humidity_samples;
+
+	/* Most recently reported LED current (centi-percent) */
+	int32_t led_current_centi;
+
+	/* Most recently reported LED power PU (centi-percent) */
+	int32_t led_power_centi;
+
+	/* Most recently reported single-signal-enabled state (0 or 1) */
+	uint8_t signal_enabled;
+
 	/* ------------------------------------------------------------------
 	 * Uptime tracking
 	 * ------------------------------------------------------------------ */
@@ -132,6 +163,17 @@ typedef struct
 
 	/* Most recent uptime value (ms) */
 	uint32_t uptime_ms;
+
+    // ------------------------------------------------------------------
+    // Device lifetime (reported by light firmware)
+    // ------------------------------------------------------------------
+
+    // Total runtime reported by the light, in seconds
+    uint32_t device_runtime_seconds;
+
+    // Flag indicating whether runtime has ever been parsed successfully
+    bool device_runtime_valid;
+
 
 } SubcMkII;
 
@@ -255,6 +297,53 @@ bool subc_mkii_get_temperature_stats(SubcMkII *driver,
  *   false if driver or output pointer is invalid
  */
 bool subc_mkii_get_uptime(SubcMkII *driver, uint32_t *out_uptime_ms);
+
+
+/**
+ * subc_mkii_get_device_runtime
+ *
+ * Retrieve the device lifetime reported by the light firmware.
+ *
+ * Inputs:
+ *   driver       - Initialized SubcMkII driver instance
+ *   out_seconds  - Pointer to receive total runtime in seconds
+ *
+ * Outputs:
+ *   true  if a runtime value has been parsed
+ *   false if no runtime has been received yet
+ */
+bool subc_mkii_get_device_runtime(SubcMkII *driver,
+                                  uint32_t *out_seconds);
+
+
+
+/**
+ * subc_mkii_get_environment_stats_formatted
+ *
+ * Purpose:
+ *   Format all available environmental statistics (temperature and humidity)
+ *   into a human-readable string suitable for serial output.
+ *
+ * Inputs:
+ *   driver  - Initialized SubcMkII driver instance
+ *   buf     - Output buffer to write formatted text into
+ *   buf_len - Size of the output buffer in bytes
+ *
+ * Outputs:
+ *   Returns true if any environmental data was available and formatted.
+ *   Returns false if no environmental data has been collected yet.
+ *
+ * Preconditions:
+ *   - driver must be initialized
+ *   - buf must point to valid writable memory
+ *
+ * Postconditions:
+ *   - buf contains a null-terminated string on success
+ */
+bool subc_mkii_get_stats_formatted(SubcMkII *driver,
+                                               char *buf,
+                                               size_t buf_len);
+
 
 
 #ifdef __cplusplus

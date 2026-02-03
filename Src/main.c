@@ -164,6 +164,9 @@ int main(void)
   Serial_begin(&SerialLIGHT, &huart1, 9600);
   subc_mkii_init(&light_driver, &SerialLIGHT);
 
+  // Wire up the serial port to the light for debug output
+  light_driver.debug_serial = &SerialUSB;
+
   Serial_print(&SerialUSB, motd);
 
 
@@ -249,18 +252,73 @@ while (1) {}
   }
   */
 
+
+  /* Debug to help check USBSErial -> Light comms in polling mode
+  // --- FORCE UARTs INTO POLLING MODE ---
+  // Disable RX interrupts
+  __HAL_UART_DISABLE_IT(&huart1, UART_IT_RXNE);
+  __HAL_UART_DISABLE_IT(&huart2, UART_IT_RXNE);
+
+  // Abort any ongoing RX (IT or DMA)
+  HAL_UART_AbortReceive(&huart1);
+  HAL_UART_AbortReceive(&huart2);
+
+  // Clear error flags
+  __HAL_UART_CLEAR_OREFLAG(&huart1);
+  __HAL_UART_CLEAR_FEFLAG(&huart1);
+  __HAL_UART_CLEAR_NEFLAG(&huart1);
+  __HAL_UART_CLEAR_PEFLAG(&huart1);
+
+  __HAL_UART_CLEAR_OREFLAG(&huart2);
+  __HAL_UART_CLEAR_FEFLAG(&huart2);
+  __HAL_UART_CLEAR_NEFLAG(&huart2);
+  __HAL_UART_CLEAR_PEFLAG(&huart2);
+  */
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
    while (1)
     {
+
+	   /*
+	   uint8_t ch;
+	   // UART1 -> UART2
+	   if (HAL_UART_Receive(&huart1, &ch, 1, 0) == HAL_OK)
+	   {
+	       HAL_UART_Transmit(
+	           &huart2,
+	           &ch,
+	           1,
+	           HAL_MAX_DELAY
+	       );
+	   }
+
+	   // UART2 -> UART1
+	   if (HAL_UART_Receive(&huart2, &ch, 1, 0) == HAL_OK)
+	   {
+	       HAL_UART_Transmit(
+	           &huart1,
+	           &ch,
+	           1,
+	           HAL_MAX_DELAY
+	       );
+	   }
+
+	*/
+
+
+
+
+
+
 	   // Run the Light driver
 	   subc_mkii_poll(&light_driver, HAL_GetTick());
 
 
 
-	   /* ---------------- UDP command handling ---------------- */
+	   // ---------------- UDP command handling ----------------
 
 	   int packet_size = EthernetUDP_parsePacket(&udp);
 	   if (packet_size > 0)
@@ -281,21 +339,21 @@ while (1) {}
 	               char buf[512];
 	               int  outlen = 0;
 
-	               /* ---------- Brightness ---------- */
+	               // ---------- Brightness ----------
 	               if (c == '1')
 	               {
 	                   subc_mkii_set_brightness(&light_driver, 100);
 	                   outlen = snprintf(buf, sizeof(buf),
-	                                     "Brightness set to 100\r\n");
+	                                     "Sent ON Command\r\n");
 	               }
 	               else if (c == '0')
 	               {
 	                   subc_mkii_set_brightness(&light_driver, 0);
 	                   outlen = snprintf(buf, sizeof(buf),
-	                                     "Brightness set to 0\r\n");
+	                                     "Send OFF Command\r\n");
 	               }
 
-	               /* ---------- Temperature ---------- */
+	               // ---------- Temperature ----------
 	               else if (c == 't')
 	               {
 	                   uint32_t t_cur, t_min, t_max, t_avg;
@@ -320,13 +378,13 @@ while (1) {}
 	                   }
 	               }
 
-	               /* ---------- MOTD ---------- */
+	               // ---------- MOTD ----------
 	               else if (c == 'm')
 	               {
 	                   outlen = snprintf(buf, sizeof(buf), "%s", motd);
 	               }
 
-	               /* ---------- Uptime ---------- */
+	               // ---------- Uptime ----------
 	               else if (c == 'u')
 	               {
 	                   uint32_t uptime_ms;
@@ -345,7 +403,7 @@ while (1) {}
 	                   }
 	               }
 
-	               /* ---------- Ethernet status ---------- */
+	               // ---------- Ethernet status ----------
 	               else if (c == 'e')
 	               {
 	                   if (Ethernet_status(buf, sizeof(buf)))
@@ -355,7 +413,7 @@ while (1) {}
 	                                         "Ethernet status unavailable\r\n");
 	               }
 
-	               /* ---------- Link status ---------- */
+	               // ---------- Link status ----------
 	               else if (c == 'l')
 	               {
 	                   EthernetLinkStatus st = Ethernet_linkStatus();
@@ -371,7 +429,7 @@ while (1) {}
 	                                         "Ethernet Link: UNKNOWN\r\n");
 	               }
 
-	               /* ---------- Network info ---------- */
+	               // ---------- Network info ----------
 	               else if (c == 'i')
 	               {
 	                   uint8_t ip[4], gw[4], mask[4], mac[6];
@@ -399,12 +457,12 @@ while (1) {}
 	                   }
 	               }
 
-	               /* ---------- STATS (SPECIAL CASE) ---------- */
+	               // ---------- STATS (SPECIAL CASE) ----------
 	               else if (c == 's')
 	               {
 	                   if (EthernetUDP_beginPacket(&udp, remote_ip, remote_port))
 	                   {
-	                       /* ---------- Ethernet global stats ---------- */
+	                       // ---------- Ethernet global stats ----------
 	                       const Ethernet_Stats *eth = Ethernet_getStats();
 
 	                       int len2 = snprintf(buf, sizeof(buf),
@@ -428,7 +486,7 @@ while (1) {}
 
 	                       EthernetUDP_write(&udp, buf, (size_t)len2);
 
-	                       /* ---------- UDP instance stats ---------- */
+	                       // ---------- UDP instance stats ----------
 	                       len2 = snprintf(buf, sizeof(buf),
 	                           "\r\nUDP socket %u stats:\n"
 	                           "  RX packets: %lu\n"
@@ -452,14 +510,15 @@ while (1) {}
 	                   continue;   // DO NOT fall through to generic send
 	               }
 
-	               /* ---------- Unknown command ---------- */
+
+	               // ---------- Unknown command ----------
 	               else
 	               {
 	                   outlen = snprintf(buf, sizeof(buf),
 	                                     "Unknown cmd '%c'\r\n", udp_rx_buf);
 	               }
 
-	               /* ---------- Generic UDP reply ---------- */
+	               // ---------- Generic UDP reply ----------
 	               if (outlen > 0)
 	               {
 	                   if (EthernetUDP_beginPacket(&udp, remote_ip, remote_port))
@@ -472,13 +531,7 @@ while (1) {}
 	       }
 	   }
 
-/*
-	   if (eth_initialized)
-	   {
-		   // Run the ethernet driver
-	       wizchip_driver_poll(&eth_driver, HAL_GetTick());
-	   }
-*/
+
 
 
 	   if (Serial_available(&SerialUSB) > 0)
@@ -524,6 +577,8 @@ while (1) {}
 	           {
 	               Serial_print(&SerialUSB, "Temp: no data\r\n");
 	           }
+	       }else if (c == 'p'){
+	    	   Serial_print(&SerialLIGHT, "$St");
 	       }
 	       else if( c == 'm'){
 	    	   Serial_print(&SerialUSB, motd);
@@ -600,18 +655,11 @@ while (1) {}
 	               Serial_print(&SerialUSB, "NetInfo unavailable\r\n");
 	           }
 	       }
-	       else if (c == 'd')
-	       {
-	    	   /*
-	           wizchip_driver_request_dhcp(&eth_driver);
-	           Serial_print(&SerialUSB, "DHCP requested\r\n");
-	           */
-	       }
 	       else if (c == 's')
 	       {
 	           char buf[512];
 
-	           /* ---------- Ethernet global stats ---------- */
+	           // ---------- Ethernet global stats ----------
 	           const Ethernet_Stats *eth = Ethernet_getStats();
 
 	           snprintf(buf, sizeof(buf),
@@ -635,7 +683,7 @@ while (1) {}
 
 	           Serial_print(&SerialUSB, buf);
 
-	           /* ---------- UDP instance stats ---------- */
+	           // ---------- UDP instance stats ----------
 	           snprintf(buf, sizeof(buf),
 	                    "\r\nUDP socket %u stats:\r\n"
 	                    "  RX packets: %lu\r\n"
@@ -654,26 +702,22 @@ while (1) {}
 
 	           Serial_print(&SerialUSB, buf);
 	       }
+	       else if (c == 'd')
+			   {
+	    	   char buf[512];
+				   if (!subc_mkii_get_stats_formatted(&light_driver,
+																   buf,
+																   sizeof(buf)))
+				   {
+					   snprintf(buf, sizeof(buf),
+								"Environment: no data\r\n");
+				   }
+
+				   Serial_print(&SerialUSB, buf);
+			   }
 	   }
 
-	   /*
-	   uint8_t resp[128];
-	   uint16_t resp_len;
 
-	   if (subc_mkii_response_available(&light_driver))
-	   {
-	       subc_mkii_read_response(&light_driver, resp, &resp_len);
-
-	       // Forward raw response to host //
-	       for (uint16_t i = 0; i < resp_len; i++)
-	       {
-	           char out[2] = { (char)resp[i], 0 };
-	           Serial_print(&SerialUSB, out);
-
-	       }
-	   }
-
-   	   */
 
 
 
@@ -781,7 +825,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
+  huart1.Init.BaudRate = 9600;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
