@@ -35,6 +35,10 @@ static Ethernet_Stats eth_stats;
 static bool cached_link_up;
 static bool link_state_valid;
 
+// Last configuration used to initialize Ethernet
+static WizchipNetConfig cached_cfg;
+static bool cfg_valid = false;
+
 
 /**
  * Initialize the Ethernet interface.
@@ -46,6 +50,10 @@ bool Ethernet_begin(const WizchipNetConfig *cfg)
 {
     if (!cfg)
         return false;
+
+    // Cache configuration for reset reuse
+	cached_cfg = *cfg;
+	cfg_valid = true;
 
     if (!wizchip_driver_init(&eth_driver, cfg))
     {
@@ -279,4 +287,49 @@ void ethernet_record_rx(uint32_t bytes)
 {
     eth_stats.rx_packets_total++;
     eth_stats.rx_bytes_total += bytes;
+}
+
+
+/**
+ * Reset the Ethernet interface.
+ *
+ * This function performs a full hardware and software reset of the
+ * W5500 Ethernet controller and reinitializes the driver using the
+ * last known network configuration.
+ */
+bool Ethernet_reset(void)
+{
+    // Cannot reset if Ethernet was never configured
+    if (!cfg_valid)
+        return false;
+
+    // Mark Ethernet as unavailable immediately
+    eth_initialized = false;
+    link_state_valid = false;
+    cached_link_up = false;
+
+    // Reset per session statistics
+    eth_stats.tx_packets_total = 0;
+    eth_stats.tx_bytes_total   = 0;
+    eth_stats.rx_packets_total = 0;
+    eth_stats.rx_bytes_total   = 0;
+
+    // Assert hardware reset on the W5500
+    wizchip_port_reset();
+
+    // Clear driver instance to a known state
+    memset(&eth_driver, 0, sizeof(eth_driver));
+
+    // Reinitialize using cached configuration
+    if (!wizchip_driver_init(&eth_driver, &cached_cfg))
+    {
+        eth_stats.init_failures++;
+        return false;
+    }
+
+    eth_initialized = true;
+    eth_stats.init_count++;
+
+    ethernet_observe_link();
+    return true;
 }
