@@ -110,6 +110,7 @@ static void MX_USART1_UART_Init(void);
 static void MX_SPI3_Init(void);
 /* USER CODE BEGIN PFP */
 
+static bool bringup_network(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -173,23 +174,9 @@ int main(void)
 
 
   // Bring up Ethernet using the new abstraction
-  if (!Ethernet_begin(&eth_cfg))
+  if (!bringup_network())
   {
-      Serial_print(&SerialUSB, "Ethernet init FAILED\r\n");
-  }
-  else
-  {
-      Serial_print(&SerialUSB, "Ethernet init OK\r\n");
-
-      // Start UDP listener on port 5000
-      if (EthernetUDP_begin(&udp, 5000))
-      {
-          Serial_print(&SerialUSB, "UDP echo listening on port 5000\r\n");
-      }
-      else
-      {
-          Serial_print(&SerialUSB, "UDP begin FAILED\r\n");
-      }
+      Serial_print(&SerialUSB, "Network bringup FAILED\r\n");
   }
 
 
@@ -623,6 +610,17 @@ while (1) {}
 	           else
 	               Serial_print(&SerialUSB, "Ethernet Link: UNKNOWN\r\n");
 	       }
+	       else if (c == 'r')
+		   {
+	    	   if (!Ethernet_reset())
+	    	   {
+	    	       Serial_print(&SerialUSB, "Ethernet reset FAILED\r\n");
+	    	   }
+	    	   else if (!bringup_network())
+	    	   {
+	    	       Serial_print(&SerialUSB, "Network rebind FAILED\r\n");
+	    	   }
+		   }
 	       else if (c == 'i')
 	       {
 	    	   // print ethernet info
@@ -940,6 +938,18 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+
+static bool bringup_network(void)
+{
+    if (!Ethernet_begin(&eth_cfg))
+        return false;
+
+    if (!EthernetUDP_begin(&udp, 5000))
+        return false;
+
+    return true;
+}
 
 /* USER CODE END 4 */
 

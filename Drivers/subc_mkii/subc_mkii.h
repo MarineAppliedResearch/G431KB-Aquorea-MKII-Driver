@@ -44,7 +44,7 @@ extern "C" {
  * -------------------------------------------------------------------------- */
 
 /* Maximum number of bytes we will store for a single light response */
-#define SUBC_MKII_RESPONSE_BUF_SIZE 512
+#define SUBC_MKII_RESPONSE_BUF_SIZE 256
 
 /* How many milliseconds the driver waits between querying the temp. */
 #define SUBC_MKII_TEMP_REQUEST_INTERVAL_MS 10000

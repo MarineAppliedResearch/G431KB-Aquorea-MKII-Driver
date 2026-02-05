@@ -249,4 +249,19 @@ bool Ethernet_status(char *buf, size_t len);
 const Ethernet_Stats *Ethernet_getStats(void);
 
 
+/**
+ * Ethernet_reset
+ *
+ * Resets the ethernet device
+ *
+ * Returns:
+ *   False if reset is not succesful
+ *
+ * Notes:
+ *   Sends reset signal to ethernet device, and then reinitializes
+ *   ethernet with the cached configurations.
+ *   */
+bool Ethernet_reset(void);
+
+
 #endif /* ETHERNET_H */
