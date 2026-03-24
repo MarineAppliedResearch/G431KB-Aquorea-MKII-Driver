@@ -28,6 +28,8 @@
 #include <stdio.h>
 #include "ethernet.h"
 #include "ethernet_udp.h"
+#include <stdint.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -63,6 +65,8 @@ const char motd[] =
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi1;
 
+TIM_HandleTypeDef htim3;
+
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
 
@@ -94,6 +98,16 @@ static const WizchipNetConfig eth_cfg =
 };
 
 
+// -----------------------------------------------------------------------------
+// Flash timing state
+//
+// These variables track whether the flash is currently active and when it
+// should be turned off.
+// -----------------------------------------------------------------------------
+static volatile bool g_flashActive = false;
+static uint32_t g_flashEndTimeMs = 0;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -102,7 +116,17 @@ static void MX_GPIO_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
+
+// Flash function prototypes.
+void flash_set_duty(float dutyCycle);
+void flash_start(float dutyCycle, uint32_t durationMs);
+void flash_stop(void);
+void flash_update(void);
+void flash_pin_force_off_gpio(void);
+void flash_pin_enable_pwm_mode(void);
+
 
 
 // Reset and bring up the ethernet network
@@ -155,7 +179,14 @@ int main(void)
   MX_SPI1_Init();
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+
+  // Initialize the PWM light control.
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+
+  // Make sure flash doesn't start on
+  flash_stop();
 
   // Start the serial devices
   Serial_begin(&SerialUSB, &huart1, 115200);    // Our debug serial is hooked up as huart1
@@ -182,6 +213,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  // Service the flash timer
+	  flash_update();
 
 	  // this is how we toggle led light on the board
 	  /*
@@ -239,6 +272,29 @@ int main(void)
 					   subc_mkii_set_brightness(&light_driver, 0);
 					   outlen = snprintf(buf, sizeof(buf),
 										 "Send OFF Command\r\n");
+				   }
+				   else if(c == 's'){
+					   subc_mkii_assert_single_signal_mode(&light_driver);
+				   }
+
+				   else if (c == 'f') {
+				       int duty = 0;
+				       int length_ms = 0;
+
+				       if (sscanf((const char*)udp_rx_buf, "f,%d,%d", &duty, &length_ms) == 2) {
+				           if (duty < 0) {
+				               duty = 0;
+				           }
+
+				           if (duty > 255) {
+				               duty = 255;
+				           }
+
+				           if (length_ms > 0) {
+				               float dutyCycle = ((float)duty) / 255.0f;
+				               flash_start(dutyCycle, (uint32_t)length_ms);
+				           }
+				       }
 				   }
 
 				   // ---------- Temperature ----------
@@ -435,6 +491,19 @@ int main(void)
 				   subc_mkii_set_brightness(&light_driver, 0);
 				   Serial_print(&SerialUSB, "Brightness set to 0\r\n");
 			   }
+
+			   else if(c == 's'){
+				   subc_mkii_assert_single_signal_mode(&light_driver);
+				   Serial_print(&SerialUSB, "subc_mkii_assert_single_signal_mode\r\n");
+			   }
+
+			   else if(c== 'q'){
+				   flash_start(0.50f, 25);
+			   }
+			   else if(c== 'a'){
+			   	   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+			   }
+
 			   else if (c == 't')
 			   {
 				   uint32_t t_cur;
@@ -705,6 +774,55 @@ static void MX_SPI1_Init(void)
 }
 
 /**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 169;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 999;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 500;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+  HAL_TIM_MspPostInit(&htim3);
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -860,6 +978,137 @@ static bool bringup_network(void)
 
     return true;
 }
+
+
+// -----------------------------------------------------------------------------
+// flash_pwm_for_time
+//
+// Applies a PWM duty cycle on TIM3 CH4 for a fixed number of milliseconds,
+// then turns the output back off.
+// duty_cycle: 0.0f to 1.0f
+// duration_ms: how long to hold that duty cycle
+// -----------------------------------------------------------------------------
+void flash_pwm_for_time(float duty_cycle, uint32_t duration_ms)
+{
+    uint32_t period;
+    uint32_t compare;
+
+    // Clamp the requested duty cycle so invalid values do not go out of range.
+    if (duty_cycle < 0.0f) {
+        duty_cycle = 0.0f;
+    }
+
+    if (duty_cycle > 1.0f) {
+        duty_cycle = 1.0f;
+    }
+
+    // Read the timer period directly from the hardware setup.
+    // This makes the function still work even if you later change ARR in CubeMX.
+    period = __HAL_TIM_GET_AUTORELOAD(&htim3);
+
+    // Convert 0.0 to 1.0 into 0 to period.
+    // Example with period = 255:
+    // 0.0 -> 0
+    // 0.5 -> about 128
+    // 1.0 -> 255
+    compare = (uint32_t)(duty_cycle * (float)period);
+
+    // Apply the requested duty cycle to TIM3 channel 4.
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, compare);
+
+    // Hold that PWM value for the requested flash duration.
+    HAL_Delay(duration_ms);
+
+    // Turn the PWM output back off.
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+}
+
+
+
+// -----------------------------------------------------------------------------
+// flash_set_duty
+//
+// Sets TIM3 CH4 duty cycle from a normalized value in the range 0.0 to 1.0.
+// The timer period is read from the hardware so this still works if ARR changes
+// later in CubeMX.
+// -----------------------------------------------------------------------------
+void flash_set_duty(float dutyCycle)
+{
+    uint32_t period;
+    uint32_t compare;
+
+    // Clamp duty cycle into the legal range.
+    if (dutyCycle < 0.0f) {
+        dutyCycle = 0.0f;
+    }
+
+    if (dutyCycle > 1.0f) {
+        dutyCycle = 1.0f;
+    }
+
+    // Read the timer auto reload value.
+    // If ARR = 255, this gives an Arduino like 8 bit scale.
+    period = __HAL_TIM_GET_AUTORELOAD(&htim3);
+
+    // Convert 0.0 to 1.0 into 0 to period.
+    compare = (uint32_t)(dutyCycle * (float)period);
+
+    // Apply the duty cycle to TIM3 channel 4.
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, compare);
+}
+
+// -----------------------------------------------------------------------------
+// flash_start
+//
+// Starts the flash at the requested duty cycle and records when it must end.
+// This function returns immediately, so it does not block the rest of firmware.
+// -----------------------------------------------------------------------------
+void flash_start(float dutyCycle, uint32_t durationMs)
+{
+    // Apply the requested PWM duty right now.
+    flash_set_duty(dutyCycle);
+
+    // Record the stop time using the HAL millisecond tick.
+    g_flashEndTimeMs = HAL_GetTick() + durationMs;
+
+    // Mark the flash as currently active.
+    g_flashActive = true;
+}
+
+// -----------------------------------------------------------------------------
+// flash_stop
+//
+// Forces the flash off immediately.
+// -----------------------------------------------------------------------------
+void flash_stop(void)
+{
+    // Set PWM duty to zero so the flash output turns off.
+    flash_set_duty(0.0f);
+
+    // Mark the flash as inactive.
+    g_flashActive = false;
+}
+
+// -----------------------------------------------------------------------------
+// flash_update
+//
+// Checks whether the active flash duration has expired. If so, it turns the
+// flash off. Call this repeatedly from the main loop.
+// -----------------------------------------------------------------------------
+void flash_update(void)
+{
+    // Nothing to do if the flash is already off.
+    if (!g_flashActive) {
+        return;
+    }
+
+    // Use signed subtraction so tick rollover is handled safely.
+    if ((int32_t)(HAL_GetTick() - g_flashEndTimeMs) >= 0) {
+        flash_stop();
+    }
+}
+
+
 
 /* USER CODE END 4 */
 

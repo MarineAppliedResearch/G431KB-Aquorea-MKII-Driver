@@ -114,6 +114,36 @@ bool subc_mkii_set_brightness(SubcMkII *driver, uint8_t percent)
 }
 
 
+/**
+ * subc_mkii_assert_single_signal_mode
+ *
+ * Activates Single Signal Mode, Enabling PWM Control
+ *
+ */
+bool subc_mkii_assert_single_signal_mode(SubcMkII *driver)
+{
+    char cmd[8];  /* "$Li" + up to 3 digits + null */
+
+    if (!driver || !driver->light_serial)
+        return false;
+
+
+    /*
+     * Format light command.
+     * Protocol requires:
+     *   $     start character
+     *   Lb    brightness opcode
+     *   ###   decimal parameter (no terminator)
+     */
+    snprintf(cmd, sizeof(cmd), "$Li");
+
+    /* Send command to the light immediately */
+    Serial_print(driver->light_serial, cmd);
+
+    return true;
+}
+
+
 
 /**
  * subc_mkii_poll
