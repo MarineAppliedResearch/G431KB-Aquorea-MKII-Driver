@@ -113,6 +113,48 @@ bool subc_mkii_set_brightness(SubcMkII *driver, uint8_t percent)
     return true;
 }
 
+/**
+ * subc_mkii_set_dimming_frequency
+ *
+ * Set the internal dimming PWM frequency in Hertz.
+ *
+ * Valid range from SubC:
+ *   100 to 1000 Hz
+ *
+ * This is a streaming command:
+ * - It does not wait for a response
+ * - It does not block other commands
+ * - It may be sent repeatedly if needed
+ */
+bool subc_mkii_set_dimming_frequency(SubcMkII *driver, uint16_t frequency_hz)
+{
+    char cmd[10];  /* "$Lf" + up to 4 digits + null */
+
+    if (!driver || !driver->light_serial)
+        return false;
+
+    /* Clamp frequency to valid range */
+    if (frequency_hz < 100)
+        frequency_hz = 100;
+
+    if (frequency_hz > 1000)
+        frequency_hz = 1000;
+
+    /*
+     * Format light command.
+     * Protocol requires:
+     *   $      start character
+     *   Lf     dimming frequency opcode
+     *   ####   decimal parameter (no terminator)
+     */
+    snprintf(cmd, sizeof(cmd), "$Lf%u", frequency_hz);
+
+    /* Send command to the light immediately */
+    Serial_print(driver->light_serial, cmd);
+
+    return true;
+}
+
 
 /**
  * subc_mkii_assert_single_signal_mode

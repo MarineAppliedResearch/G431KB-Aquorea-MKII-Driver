@@ -204,6 +204,9 @@ int main(void)
       Serial_print(&SerialUSB, "Network bringup FAILED\r\n");
   }
 
+  // Set the pwm mode in the light itself to 1000k
+  subc_mkii_set_dimming_frequency(&light_driver, 1000);
+
 
   EthernetUDP_set_logger(wiznet_log);
 
@@ -276,7 +279,9 @@ int main(void)
 				   else if(c == 's'){
 					   subc_mkii_assert_single_signal_mode(&light_driver);
 				   }
-
+				   else if(c == 'd'){
+					   subc_mkii_set_dimming_frequency(&light_driver, 1000);
+				   }
 				   else if (c == 'f') {
 				       int duty = 0;
 				       int length_ms = 0;
@@ -291,8 +296,9 @@ int main(void)
 				           }
 
 				           if (length_ms > 0) {
-				               float dutyCycle = ((float)duty) / 255.0f;
-				               flash_start(dutyCycle, (uint32_t)length_ms);
+				               //float dutyCycle = ((float)duty) / 255.0f;
+				               //flash_start(dutyCycle, (uint32_t)length_ms);
+				        	   flash_force_high_test((uint32_t)length_ms);
 				           }
 				       }
 				   }
@@ -792,7 +798,7 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 169;
+  htim3.Init.Prescaler = 16;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 999;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -977,6 +983,38 @@ static bool bringup_network(void)
         return false;
 
     return true;
+}
+
+
+// -----------------------------------------------------------------------------
+// flash_force_high_test
+//
+// TEMP TEST:
+// Stops PWM on TIM3 CH4, reconfigures PB7 as a normal GPIO output, drives it
+// steadily high for the requested time, then drives it low again.
+// -----------------------------------------------------------------------------
+void flash_force_high_test(uint32_t durationMs)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    // Stop PWM so TIM3 CH4 releases PB7.
+    HAL_TIM_PWM_Stop(&htim3, TIM_CHANNEL_4);
+
+    // Reconfigure PB7 from TIM3 alternate function into plain GPIO output.
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    // Drive PB7 to a steady 3.3V.
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+
+    // Hold it high for the requested duration.
+    HAL_Delay(durationMs);
+
+    // Drive PB7 low again.
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
 }
 
 
