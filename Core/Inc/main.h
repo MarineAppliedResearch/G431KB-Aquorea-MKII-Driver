@@ -71,6 +71,8 @@ void Error_Handler(void);
 #define WIZ_RST_GPIO_Port GPIOC
 #define WIZ_INT_Pin GPIO_PIN_5
 #define WIZ_INT_GPIO_Port GPIOC
+#define OneWire_Bus_Pin GPIO_PIN_0
+#define OneWire_Bus_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
