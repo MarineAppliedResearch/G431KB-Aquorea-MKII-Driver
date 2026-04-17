@@ -66,6 +66,8 @@ void Serial_begin(SerialPort *sp, UART_HandleTypeDef *huart, uint32_t baud)
 	sp->huart   = huart;
 	sp->rx_head = 0;
 	sp->rx_tail = 0;
+	sp->monitor_head = 0;
+	sp->monitor_tail = 0;
 
     /* Check if a baud rate has been provided */
 	if (baud > 0)
@@ -139,6 +141,36 @@ void Serial_println(SerialPort *sp, char *s)
 }
 
 
+/**
+ * Serial_write
+ *
+ * Purpose:
+ *   Transmit a raw byte buffer over the serial port.
+ *
+ * Inputs:
+ *   SerialPort *sp - An instance of a serial port struct, that has already been initialized with _begin
+ *   data - Pointer to the byte buffer to transmit
+ *   len  - Number of bytes to transmit
+ *
+ * Outputs:
+ *   None
+ */
+void Serial_write(SerialPort *sp, const uint8_t *data, uint16_t len)
+{
+    /* Ignore invalid inputs */
+    if (!sp || !data || len == 0)
+        return;
+
+    /* Transmit the provided byte buffer using a blocking HAL call. */
+    HAL_UART_Transmit(
+        sp->huart,
+        (uint8_t *)data,
+        len,
+        HAL_MAX_DELAY
+    );
+}
+
+
 /* --------------------------------------------------------------------------
  * RX buffer accessors
  * -------------------------------------------------------------------------- */
@@ -194,6 +226,57 @@ int Serial_read(SerialPort *sp)
 }
 
 
+/**
+ * Serial_monitor_available
+ *
+ * Purpose:
+ *   Return the number of unread bytes currently available in the monitor buffer.
+ *
+ * Inputs:
+ *   SerialPort *sp - An instance of a serial port struct, that has already been initialized with _begin
+ *
+ * Outputs:
+ *   Number of bytes available to read
+ */
+int Serial_monitor_available(SerialPort *sp)
+{
+    /* If head has wrapped past tail, compute normally */
+	if (sp->monitor_head >= sp->monitor_tail)
+		return sp->monitor_head - sp->monitor_tail;
+	else
+        /* Handle wrap-around case */
+	    return SERIAL_RX_BUF_SIZE - sp->monitor_tail + sp->monitor_head;
+}
+
+
+/**
+ * Serial_monitor_read
+ *
+ * Purpose:
+ *   Read a single byte from the monitor buffer.
+ *
+ * Inputs:
+ *   SerialPort *sp - An instance of a serial port struct, that has already been initialized with _begin
+ *
+ * Outputs:
+ *   The next byte as an int (0-255), or -1 if no data is available
+ */
+int Serial_monitor_read(SerialPort *sp)
+{
+    /* If head equals tail, the buffer is empty */
+    if (sp->monitor_head == sp->monitor_tail)
+        return -1;
+
+    /* Read the next byte from the buffer */
+    uint8_t c = sp->monitor_buf[sp->monitor_tail];
+
+    /* Advance the tail index, wrapping if necessary */
+    sp->monitor_tail = (sp->monitor_tail + 1) % SERIAL_RX_BUF_SIZE;
+
+    return c;
+}
+
+
 
 /* -------------------------------------------------------------------
  * Private Functions Here
@@ -242,6 +325,18 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 /* Advance the head index */
                 sp->rx_head = next;
             }
+
+            /* Also mirror the received byte into the monitor buffer so recent
+			 * serial output can be retrieved later without consuming RX data. */
+			uint16_t monitor_next = (sp->monitor_head + 1) % SERIAL_RX_BUF_SIZE;
+
+			/* Only store the byte if the monitor buffer is not full.
+			 * If full, the newest monitor byte is dropped. */
+			if (monitor_next != sp->monitor_tail)
+			{
+				sp->monitor_buf[sp->monitor_head] = sp->rx_byte;
+				sp->monitor_head = monitor_next;
+			}
 
             /* Re-arm the UART receive interrupt for the next byte.
              * This is critical: without this, only one byte would ever be received. */

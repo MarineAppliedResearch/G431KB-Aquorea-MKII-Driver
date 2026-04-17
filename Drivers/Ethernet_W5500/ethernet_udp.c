@@ -27,6 +27,13 @@ static ethernet_udp_log_fn udp_logger = NULL;
 
 #define ETHERNET_UDP_DEBUG 0
 
+// Allocate W5500 hardware socket numbers to EthernetUDP instances.
+//
+// For now we hand out socket numbers sequentially as UDP objects are opened.
+// This is enough for the current firmware, which opens a small fixed number
+// of sockets during startup and does not yet need socket recycling.
+static uint8_t g_next_udp_socket = 0;
+
 
 
 // Internal Ethernet stats hooks (not part of public API)
@@ -51,10 +58,15 @@ bool EthernetUDP_begin(EthernetUDP *udp, uint16_t port)
     // Clear all state so the structure starts in a known condition
     memset(udp, 0, sizeof(*udp));
 
-    // For the skeleton implementation we use a fixed socket index
-    // This will be replaced later with proper socket allocation
-    udp->socket = 0;
-    udp->local_port = port;
+    // Refuse to allocate beyond the W5500 hardware socket count.
+	// The W5500 provides sockets 0 through 7.
+	if (g_next_udp_socket >= 8)
+		return false;
+
+	// Assign this UDP instance a unique hardware socket number so
+	// multiple EthernetUDP objects do not collide with each other.
+	udp->socket = g_next_udp_socket++;
+	udp->local_port = port;
 
     // Open a UDP socket using the WIZnet ioLibrary
     // socket() returns the socket number on success
