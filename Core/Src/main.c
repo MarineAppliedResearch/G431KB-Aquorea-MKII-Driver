@@ -116,6 +116,9 @@ static const WizchipNetConfig eth_cfg =
 static volatile bool g_flashActive = false;
 static uint32_t g_flashEndTimeMs = 0;
 
+// Used to set the default OFF brightness of the LED
+static uint8_t g_flashAlwaysOnBrightness = 0;
+
 
 // Sequence counter for outbound serial_rx JSON packets sent over the console
 // UDP socket. This is independent from any incoming seq values.
@@ -135,7 +138,7 @@ static void MX_TIM3_Init(void);
 
 // Flash function prototypes.
 void flash_set_duty(float dutyCycle);
-void flash_start(float dutyCycle, uint32_t durationMs);
+void flash_start(float dutyCycle, uint8_t defaultDutyCycle, uint32_t durationMs);
 void flash_stop(void);
 void flash_update(void);
 void flash_pin_force_off_gpio(void);
@@ -731,6 +734,12 @@ int main(void)
 
 		   if (len > 0)
 		   {
+
+			   // Force null termination so sscanf sees a clean C string and does not
+			   	// read stale bytes left over from a previous longer packet.
+			   	udp_rx_buf[len] = '\0';
+
+
 			   uint8_t  remote_ip[4];
 			   uint16_t remote_port;
 
@@ -767,9 +776,10 @@ int main(void)
 				   }
 				   else if (c == 'f') {
 				       int duty = 0;
+				       int defaultDuty = 0;
 				       int length_ms = 0;
 
-				       if (sscanf((const char*)udp_rx_buf, "f,%d,%d", &duty, &length_ms) == 2) {
+				       if (sscanf((const char*)udp_rx_buf, "f,%d,%d,%d", &duty, &defaultDuty,  &length_ms) == 3) {
 				           if (duty < 0) {
 				               duty = 0;
 				           }
@@ -778,9 +788,17 @@ int main(void)
 				               duty = 255;
 				           }
 
+				           if (defaultDuty < 0) {
+							   defaultDuty = 0;
+						   }
+
+						   if (defaultDuty > 255) {
+							   defaultDuty = 255;
+						   }
+
 				           if (length_ms > 0) {
 				               float dutyCycle = ((float)duty) / 255.0f;
-				               flash_start(dutyCycle, (uint32_t)length_ms);
+				               flash_start(dutyCycle, (uint8_t)defaultDuty, (uint32_t)length_ms);
 				        	   //flash_force_high_test((uint32_t)length_ms);
 				           }
 				       }
@@ -891,7 +909,7 @@ int main(void)
 				   }
 
 				   // ---------- STATS (SPECIAL CASE) ----------
-				   else if (c == 's')
+				   else if (c == 'S')
 				   {
 					   if (EthernetUDP_beginPacket(&udp, remote_ip, remote_port))
 					   {
@@ -987,7 +1005,7 @@ int main(void)
 			   }
 
 			   else if(c== 'q'){
-				   flash_start(0.50f, 25);
+				   flash_start(0.50f, 0, 25);
 			   }
 			   else if(c== 'a'){
 			   	   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
@@ -1590,10 +1608,12 @@ void flash_set_duty(float dutyCycle)
 // Starts the flash at the requested duty cycle and records when it must end.
 // This function returns immediately, so it does not block the rest of firmware.
 // -----------------------------------------------------------------------------
-void flash_start(float dutyCycle, uint32_t durationMs)
+void flash_start(float dutyCycle, uint8_t defaultDutyCycle, uint32_t durationMs)
 {
     // Apply the requested PWM duty right now.
     flash_set_duty(dutyCycle);
+
+    g_flashAlwaysOnBrightness = defaultDutyCycle; //defaultDutyCycle;
 
     // Record the stop time using the HAL millisecond tick.
     g_flashEndTimeMs = HAL_GetTick() + durationMs;
@@ -1610,10 +1630,14 @@ void flash_start(float dutyCycle, uint32_t durationMs)
 void flash_stop(void)
 {
     // Set PWM duty to zero so the flash output turns off.
-    flash_set_duty(0.0f);
+    flash_set_duty((float)g_flashAlwaysOnBrightness/255.0f);
+
+
 
     // Mark the flash as inactive.
     g_flashActive = false;
+
+    //g_flashAlwaysOnBrightness = 0;
 }
 
 // -----------------------------------------------------------------------------
