@@ -33,6 +33,7 @@
 #include "ethernet_udp.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include "onewire.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
