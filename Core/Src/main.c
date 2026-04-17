@@ -22,6 +22,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#define JSMN_HEADER // Needed by all files that use jsmn.h for json parsing
+#include "jsmn.h"   // Json Parsing Library
+
 #include <string.h>
 #include "serial.h"
 #include "subc_mkii.h"
@@ -84,8 +87,14 @@ SubcMkII light_driver;
 // UDP echo test instance
 static EthernetUDP udp;
 
-// Simple RX buffer for echo testing
+// UDP socket used only for the raw serial console bridge.
+static EthernetUDP udp_console;
+
+// RX buffer for the main application control socket.
 static uint8_t udp_rx_buf[256];
+
+// RX buffer for the serial console socket.
+static uint8_t udp_console_rx_buf[256];
 
 static const WizchipNetConfig eth_cfg =
 {
@@ -106,6 +115,11 @@ static const WizchipNetConfig eth_cfg =
 // -----------------------------------------------------------------------------
 static volatile bool g_flashActive = false;
 static uint32_t g_flashEndTimeMs = 0;
+
+
+// Sequence counter for outbound serial_rx JSON packets sent over the console
+// UDP socket. This is independent from any incoming seq values.
+static uint32_t g_console_tx_seq = 1;
 
 
 /* USER CODE END PV */
@@ -132,6 +146,10 @@ void flash_pin_enable_pwm_mode(void);
 // Reset and bring up the ethernet network
 static bool bringup_network(void);
 
+// Poll the console UDP socket, parse one JSON command packet if present,
+/// and forward the requested text to the selected serial device.
+static void poll_udp_console(EthernetUDP *udp_console);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -144,6 +162,458 @@ static void wiznet_log(const char *msg)
     Serial_print(&SerialUSB, (char *)msg);
     Serial_print(&SerialUSB, "\r\n");
 }
+
+// -----------------------------------------------------------------------------
+// jsoneq
+//
+// Check whether one jsmn token matches a specific JSON object key or string
+// value in the received packet text.
+//
+// Wider context:
+//   jsmn does not build C strings or objects for us. It only returns tokens
+//   that point to start/end positions inside the original JSON buffer.
+//   This helper lets higher-level parsing code compare one of those tokens
+//   against an expected string such as "type", "device", "data", or
+//   "serial_tx" while walking through the parsed token list.
+//
+// Returns:
+//   0  if the token text exactly matches the provided string
+//  -1  otherwise
+// -----------------------------------------------------------------------------
+static int jsoneq(const char *json, jsmntok_t *tok, const char *s)
+{
+    // Require the token to be a JSON string and require its length
+    // to exactly match the comparison string length.
+    if (tok->type == JSMN_STRING &&
+        (int)strlen(s) == tok->end - tok->start &&
+        strncmp(json + tok->start, s, tok->end - tok->start) == 0)
+    {
+        return 0;
+    }
+
+    return -1;
+}
+
+
+// -----------------------------------------------------------------------------
+// poll_udp_console
+//
+// Poll the dedicated console UDP socket and, if a JSON packet is present,
+// parse the requested serial device and text payload, then forward that
+// text to the matching serial port.
+//
+// Expected JSON format:
+//   {"type":"serial_tx","device":"SerialLIGHT","data":"$St"}
+// -----------------------------------------------------------------------------
+static void poll_udp_console(EthernetUDP *udp_console)
+{
+    // Hold the size of the next waiting UDP packet.
+    int packet_size = 0;
+
+    // Hold the number of bytes actually read from the UDP packet.
+    int len = 0;
+
+    // Hold the sender metadata for this console packet.
+    uint8_t remote_ip[4];
+    uint16_t remote_port;
+
+    // Hold the jsmn parser instance used to tokenize this JSON packet.
+    jsmn_parser parser;
+
+    // Hold the parsed token array for this small console message.
+    jsmntok_t tokens[32];
+
+    // Hold the parse result returned by jsmn_parse().
+    int token_count = 0;
+
+    // Hold pointers into the received JSON text for the values we care about.
+    const char *type = NULL;
+    const char *device = NULL;
+    const char *data = NULL;
+
+    // Hold the token lengths because jsmn tokens are not null-terminated.
+    int type_len = 0;
+    int device_len = 0;
+    int data_len = 0;
+
+    // Hold the incoming sequence number from the JSON packet.
+	int seq = 0;
+
+	// Track whether a valid seq field was actually found and parsed.
+	bool have_seq = false;
+
+	// Remember the exact seq value token so we can patch only that slice
+	// in the original received JSON when echoing the packet back.
+	jsmntok_t *seq_value_tok = NULL;
+
+	// Hold the echoed packet after we patch only the seq substring.
+	char echo_buf[256];
+	int echo_len = 0;
+
+    // Ignore invalid UDP socket pointers.
+    if (!udp_console)
+        return;
+
+    // Ask whether a new console UDP packet is waiting.
+    packet_size = EthernetUDP_parsePacket(udp_console);
+
+    // Stop immediately if no console packet is available.
+    if (packet_size <= 0)
+        return;
+
+    // Read the waiting console packet into the dedicated console RX buffer.
+    // Leave one extra byte so we can add a null terminator safely.
+    len = EthernetUDP_read(
+        udp_console,
+        udp_console_rx_buf,
+        sizeof(udp_console_rx_buf) - 1
+    );
+
+    // Stop if the UDP read failed or returned no payload.
+    if (len <= 0)
+        return;
+
+    // Read the sender metadata for this packet.
+    if (!EthernetUDP_remoteIP(udp_console, remote_ip) ||
+        !EthernetUDP_remotePort(udp_console, &remote_port))
+    {
+        return;
+    }
+
+    // Null-terminate the received packet so helper code can safely treat
+    // it like a C string where needed.
+    udp_console_rx_buf[len] = '\0';
+
+    // Initialize the jsmn parser before tokenizing this JSON text.
+    jsmn_init(&parser);
+
+    // Tokenize the received JSON text into the local token array.
+    token_count = jsmn_parse(
+        &parser,
+        (const char *)udp_console_rx_buf,
+        len,
+        tokens,
+        32
+    );
+
+    // Stop if the JSON packet failed to parse.
+    if (token_count < 0)
+        return;
+
+    // Require the root token to be a JSON object.
+    if (token_count < 1 || tokens[0].type != JSMN_OBJECT)
+        return;
+
+    // Walk through the returned token array looking for the object keys
+        // "type", "device", "data", and "seq". When one of those keys is
+        // found, the token immediately after it is that key's value.
+    for (int i = 1; i < token_count; i++)
+    {
+        // Check whether this token is the key "type".
+        if (jsoneq((const char *)udp_console_rx_buf, &tokens[i], "type") == 0)
+        {
+            // Point to the value token that follows the "type" key.
+            jsmntok_t *value_tok = &tokens[i + 1];
+
+            // Save the substring pointer and length for the type value.
+            type = (const char *)udp_console_rx_buf + value_tok->start;
+            type_len = value_tok->end - value_tok->start;
+
+            // Skip the value token since we already consumed it.
+            i++;
+        }
+
+        // Check whether this token is the key "device".
+        else if (jsoneq((const char *)udp_console_rx_buf, &tokens[i], "device") == 0)
+        {
+            // Point to the value token that follows the "device" key.
+            jsmntok_t *value_tok = &tokens[i + 1];
+
+            // Save the substring pointer and length for the device value.
+            device = (const char *)udp_console_rx_buf + value_tok->start;
+            device_len = value_tok->end - value_tok->start;
+
+            // Skip the value token since we already consumed it.
+            i++;
+        }
+
+        // Check whether this token is the key "data".
+        else if (jsoneq((const char *)udp_console_rx_buf, &tokens[i], "data") == 0)
+        {
+            // Point to the value token that follows the "data" key.
+            jsmntok_t *value_tok = &tokens[i + 1];
+
+            // Save the substring pointer and length for the data value.
+            data = (const char *)udp_console_rx_buf + value_tok->start;
+            data_len = value_tok->end - value_tok->start;
+
+            // Skip the value token since we already consumed it.
+            i++;
+        }
+
+        // Check whether this token is the key "seq".
+		else if (jsoneq((const char *)udp_console_rx_buf, &tokens[i], "seq") == 0)
+		{
+			// Point to the value token that follows the "seq" key.
+			jsmntok_t *value_tok = &tokens[i + 1];
+
+			// Copy the numeric token into a temporary C string so atoi()
+			// can parse it safely.
+			char seq_buf[16];
+			int seq_len = value_tok->end - value_tok->start;
+
+			// Only parse sequence text that fits in our local temp buffer.
+			if (seq_len > 0 && seq_len < (int)sizeof(seq_buf))
+			{
+				memcpy(seq_buf,
+					   (const char *)udp_console_rx_buf + value_tok->start,
+					   (size_t)seq_len);
+
+				seq_buf[seq_len] = '\0';
+
+				// Convert the JSON numeric token text into an integer.
+				seq = atoi(seq_buf);
+				have_seq = true;
+
+				// Save the exact seq token location so the echo path can
+				// replace only this numeric substring in the original packet.
+				seq_value_tok = value_tok;
+			}
+
+			// Skip the value token since we already consumed it.
+			i++;
+		}
+    }
+
+    // Require all three expected JSON fields before continuing.
+    if (!type || !device || !data || !have_seq || !seq_value_tok)
+        return;
+
+    // Only process packets whose "type" value is exactly "serial_tx".
+    if (!(type_len == (int)strlen("serial_tx") &&
+          strncmp(type, "serial_tx", type_len) == 0))
+    {
+        return;
+    }
+
+    // Route the outgoing text to SerialLIGHT when requested by name.
+    if (device_len == (int)strlen("SerialLIGHT") &&
+        strncmp(device, "SerialLIGHT", device_len) == 0)
+    {
+    	//Serial_println(&SerialLIGHT, "test\r\n");
+        Serial_write(&SerialLIGHT, (const uint8_t *)data, (uint16_t)data_len);
+    }
+
+    // Route the outgoing text to SerialUSB when requested by name.
+    else if (device_len == (int)strlen("SerialUSB") &&
+             strncmp(device, "SerialUSB", device_len) == 0)
+    {
+        Serial_write(&SerialUSB, (const uint8_t *)data, (uint16_t)data_len);
+    }
+
+// Stop if the device name did not match any known serial port.
+	else
+	{
+		return;
+	}
+
+	// Build the echo by copying the ORIGINAL received JSON packet and
+	// replacing only the seq numeric token with seq + 1. This preserves
+	// field order, spacing, and any extra keys we are not using here.
+	{
+		char seq_buf[16];
+		int seq_out_len = 0;
+		int prefix_len = 0;
+		int suffix_len = 0;
+
+		// Format the incremented sequence number into text.
+		seq_out_len = snprintf(seq_buf, sizeof(seq_buf), "%d", seq + 1);
+
+		// Stop if formatting failed or the new number would not fit.
+		if (seq_out_len <= 0 || seq_out_len >= (int)sizeof(seq_buf))
+			return;
+
+		// Measure the packet segments before and after the original seq token.
+		prefix_len = seq_value_tok->start;
+		suffix_len = len - seq_value_tok->end;
+
+		// Make sure the patched packet still fits in our local echo buffer.
+		if ((prefix_len + seq_out_len + suffix_len) >= (int)sizeof(echo_buf))
+			return;
+
+		// Copy everything before seq exactly as received.
+		memcpy(echo_buf,
+			   udp_console_rx_buf,
+			   (size_t)prefix_len);
+
+		// Insert the incremented seq text.
+		memcpy(echo_buf + prefix_len,
+			   seq_buf,
+			   (size_t)seq_out_len);
+
+		// Copy everything after seq exactly as received.
+		memcpy(echo_buf + prefix_len + seq_out_len,
+			   udp_console_rx_buf + seq_value_tok->end,
+			   (size_t)suffix_len);
+
+		// Total number of bytes in the patched echo packet.
+		echo_len = prefix_len + seq_out_len + suffix_len;
+	}
+
+	// Send the patched packet back to the same sender.
+	if (EthernetUDP_beginPacket(udp_console, remote_ip, remote_port))
+	{
+		EthernetUDP_write(udp_console, echo_buf, (size_t)echo_len);
+		EthernetUDP_endPacket(udp_console);
+	}
+
+	// Add more serial devices here with more else-if blocks as needed.
+}
+
+
+// -----------------------------------------------------------------------------
+// pump_seriallight_monitor
+//
+// Drain any mirrored RX bytes from SerialLIGHT, JSON-escape them, and send
+// them to the last remote endpoint associated with the console UDP socket.
+//
+// Current scope:
+//   This first version only forwards SerialLIGHT monitor bytes.
+//   We are keeping it explicit for now instead of building a registry.
+//
+// Important:
+//   This uses the last remote IP and port currently latched in udp_console.
+//   That means it will only transmit after a console client has already sent
+//   us at least one packet on that socket.
+// -----------------------------------------------------------------------------
+static void pump_seriallight_monitor(EthernetUDP *udp_console)
+{
+    // Hold the last known console client endpoint.
+    uint8_t remote_ip[4];
+    uint16_t remote_port;
+
+    // Hold raw mirrored UART bytes drained from SerialLIGHT.
+    uint8_t raw_buf[96];
+    int raw_len = 0;
+
+    // Hold JSON-escaped serial data for the "data" field.
+    char esc_buf[220];
+    int esc_len = 0;
+
+    // Hold the final outbound JSON packet.
+    char tx_buf[320];
+    int outlen = 0;
+
+    // Ignore invalid UDP socket pointers.
+    if (!udp_console)
+        return;
+
+    // Require a previously latched console remote endpoint before trying
+    // to send any serial_rx traffic back out.
+    if (!udp_console->has_remote)
+        return;
+
+    // Copy the last console sender endpoint directly from this UDP instance.
+    memcpy(remote_ip, udp_console->remote_ip, sizeof(remote_ip));
+    remote_port = udp_console->remote_port;
+
+    // Drain a bounded chunk from the mirrored SerialLIGHT monitor buffer.
+    // We intentionally send chunks rather than trying to wait for lines.
+    while (Serial_monitor_available(&SerialLIGHT) > 0 && raw_len < (int)sizeof(raw_buf))
+    {
+        int c = Serial_monitor_read(&SerialLIGHT);
+
+        // Stop if the monitor read failed unexpectedly.
+        if (c < 0)
+            break;
+
+        raw_buf[raw_len++] = (uint8_t)c;
+    }
+
+    // Stop if there was nothing waiting in the mirrored monitor buffer.
+    if (raw_len <= 0)
+        return;
+
+    // JSON-escape the drained raw serial bytes so quotes and backslashes
+    // do not break the outbound JSON packet structure.
+    for (int i = 0; i < raw_len; i++)
+    {
+        uint8_t c = raw_buf[i];
+
+        // Escape backslash as \\ inside the JSON string.
+        if (c == '\\')
+        {
+            if ((esc_len + 2) >= (int)sizeof(esc_buf))
+                break;
+
+            esc_buf[esc_len++] = '\\';
+            esc_buf[esc_len++] = '\\';
+        }
+
+        // Escape quote as \" inside the JSON string.
+        else if (c == '"')
+        {
+            if ((esc_len + 2) >= (int)sizeof(esc_buf))
+                break;
+
+            esc_buf[esc_len++] = '\\';
+            esc_buf[esc_len++] = '"';
+        }
+
+        // Escape carriage return as \r so line endings survive JSON safely.
+        else if (c == '\r')
+        {
+            if ((esc_len + 2) >= (int)sizeof(esc_buf))
+                break;
+
+            esc_buf[esc_len++] = '\\';
+            esc_buf[esc_len++] = 'r';
+        }
+
+        // Escape newline as \n for the same reason.
+        else if (c == '\n')
+        {
+            if ((esc_len + 2) >= (int)sizeof(esc_buf))
+                break;
+
+            esc_buf[esc_len++] = '\\';
+            esc_buf[esc_len++] = 'n';
+        }
+
+        // Pass through normal printable and raw single-byte characters.
+        else
+        {
+            if ((esc_len + 1) >= (int)sizeof(esc_buf))
+                break;
+
+            esc_buf[esc_len++] = (char)c;
+        }
+    }
+
+    // Null-terminate the escaped data so snprintf can consume it safely.
+    esc_buf[esc_len] = '\0';
+
+    // Build one outbound serial_rx JSON packet for this drained chunk.
+    outlen = snprintf(
+        tx_buf,
+        sizeof(tx_buf),
+        "{\"type\":\"serial_rx\",\"device\":\"SerialLIGHT\",\"data\":\"%s\",\"seq\":%lu}",
+        esc_buf,
+        (unsigned long)g_console_tx_seq++
+    );
+
+    // Stop if formatting failed or the packet did not fit.
+    if (outlen <= 0 || outlen >= (int)sizeof(tx_buf))
+        return;
+
+    // Send the JSON packet to the last console client endpoint.
+    if (EthernetUDP_beginPacket(udp_console, remote_ip, remote_port))
+    {
+        EthernetUDP_write(udp_console, tx_buf, (size_t)outlen);
+        EthernetUDP_endPacket(udp_console);
+    }
+}
+
 
 /* USER CODE END 0 */
 
@@ -242,6 +712,14 @@ int main(void)
 	    // Run the Light driver
 	    subc_mkii_poll(&light_driver, HAL_GetTick());
 
+	    // Poll the dedicated console UDP socket and forward any valid
+	    // JSON serial_tx packet to the requested serial device.
+	    poll_udp_console(&udp_console);
+
+	    // Drain mirrored SerialLIGHT RX bytes and forward them to the last
+	   	// console client as serial_rx JSON packets on the console socket.
+	   	pump_seriallight_monitor(&udp_console);
+
 	   // ---------------- UDP command handling ----------------
 
 		int packet_size = EthernetUDP_parsePacket(&udp);
@@ -270,6 +748,11 @@ int main(void)
 					   outlen = snprintf(buf, sizeof(buf),
 										 "Sent ON Command\r\n");
 				   }
+				   else if(c == 'K'){
+					   // probably the keepalive packet
+					   // do nothing for now
+
+				   }
 				   else if (c == '0')
 				   {
 					   subc_mkii_set_brightness(&light_driver, 0);
@@ -296,9 +779,9 @@ int main(void)
 				           }
 
 				           if (length_ms > 0) {
-				               //float dutyCycle = ((float)duty) / 255.0f;
-				               //flash_start(dutyCycle, (uint32_t)length_ms);
-				        	   flash_force_high_test((uint32_t)length_ms);
+				               float dutyCycle = ((float)duty) / 255.0f;
+				               flash_start(dutyCycle, (uint32_t)length_ms);
+				        	   //flash_force_high_test((uint32_t)length_ms);
 				           }
 				       }
 				   }
@@ -465,7 +948,7 @@ int main(void)
 				   else
 				   {
 					   outlen = snprintf(buf, sizeof(buf),
-										 "Unknown cmd '%c'\r\n", udp_rx_buf);
+										 "Unknown cmd '%c'\r\n", (char)udp_rx_buf[0]);
 				   }
 
 				   // ---------- Generic UDP reply ----------
@@ -798,7 +1281,7 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 16;
+  htim3.Init.Prescaler = 1;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 999;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -976,10 +1459,16 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 static bool bringup_network(void)
 {
+    // Bring up the Ethernet interface first so UDP sockets can be opened.
     if (!Ethernet_begin(&eth_cfg))
         return false;
 
+    // Open the main application control socket on port 5000.
     if (!EthernetUDP_begin(&udp, 5000))
+        return false;
+
+    // Open the dedicated serial console socket on port 5001.
+    if (!EthernetUDP_begin(&udp_console, 5001))
         return false;
 
     return true;
