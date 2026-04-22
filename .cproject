@@ -47,6 +47,7 @@
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/Drivers/subc_mkii&quot;"/>
 									<listOptionValue builtIn="false" value="${ProjDirPath}/Drivers/Ethernet_W5500"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/Drivers/onewire&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/Drivers/ds18b20&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/Drivers/json&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/Drivers/Serial&quot;"/>
 									<listOptionValue builtIn="false" value="../Drivers/STM32G4xx_HAL_Driver/Inc"/>

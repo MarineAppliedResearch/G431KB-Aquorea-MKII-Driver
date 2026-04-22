@@ -1,736 +1,972 @@
-/**************************************************************************
- * onewire.c
+/*
+ * @file        onewire.c
+ * @brief       OneWire communication driver
+ * @author      Nima Askari - Added onto by Isaac Travers
+ * @version     1.0.0
+ * @license     See the LICENSE file in the root folder.
  *
- * Author: Isaac Travers
- * Copyright: (c) 2026 Marine Applied Research & Exploration (MARE)
- * License: MIT
- * Date: 2026-04-17
+ * @note        All my libraries are dual-licensed.
+ *              Please review the licensing terms before using them.
+ *              For any inquiries, feel free to contact me.
  *
- * Purpose:
- * --------
- * Generic 1 Wire bus master library for STM32 HAL projects.
- * Provides bit banged 1 Wire reset, bit and byte read/write, ROM search,
- * ROM select, and CRC8 support for device drivers layered above it.
- *************************************************************************/
+ * @github      https://www.github.com/nimaltd
+ * @linkedin    https://www.linkedin.com/in/nimaltd
+ * @youtube     https://www.youtube.com/@nimaltd
+ * @instagram   https://instagram.com/github.nimaltd
+ *
+ * Copyright (C) 2025 Nima Askari - NimaLTD. All rights reserved.
+ */
 
-/* Public API for the generic 1 Wire bus layer. */
+/*************************************************************************************************/
+/** Includes **/
+/*************************************************************************************************/
+
+#include <string.h>
 #include "onewire.h"
 
-/* ---------------------------------------------------------------------
- * Private Function Prototypes
- * ------------------------------------------------------------------- */
+/*************************************************************************************************/
+/** Private Function prototype **/
+/*************************************************************************************************/
 
+/* Start OneWire communication */
+ow_err_t  ow_start(ow_t *handle);
+
+/* Stop OneWire communication */
+void      ow_stop(ow_t *handle);
+
+/* Handle transfer state machine */
+__STATIC_FORCEINLINE void ow_state_xfer(ow_t *handle);
+
+#if (OW_MAX_DEVICE > 1)
+/* Handle search state machine */
+__STATIC_FORCEINLINE void ow_state_search(ow_t *handle);
+#endif
+
+/* Write one bit on bus */
+__STATIC_FORCEINLINE void ow_write_bit(ow_t *handle, bool high);
+
+/* Read one bit from bus */
+__STATIC_FORCEINLINE uint8_t ow_read_bit(ow_t *handle);
+
+/*************************************************************************************************/
+/** Function Implementations **/
+/*************************************************************************************************/
+
+/*************************************************************************************************/
 /**
- * OneWire_DelayUs
- *
- * Purpose:
- *   Delay for a specified number of microseconds using the timer assigned
- *   to this 1 Wire bus instance.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *   us - Delay time in microseconds
- *
- * Outputs:
- *   None
- *
- * Preconditions:
- *   - ow is valid
- *   - ow->htim is valid
- *   - the timer is already running
- *   - the timer is configured for 1 microsecond per tick
+ * @brief  Initialize 1-Wire handle with GPIO and timer configuration.
+ * @param[in,out]  handle: Pointer to the 1-Wire handle to initialize.
+ * @param[in]  init: Pointer to initialization data (GPIO, pin, timer, callback).
  */
-static void OneWire_DelayUs(OneWire_t *ow, uint16_t us);
-
-/**
- * OneWire_BusInputDirection
- *
- * Purpose:
- *   Release the 1 Wire bus by configuring the data pin as an input.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
- */
-static void OneWire_BusInputDirection(OneWire_t *ow);
-
-/**
- * OneWire_BusOutputDirection
- *
- * Purpose:
- *   Drive the 1 Wire bus by configuring the data pin as open drain output.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
- */
-static void OneWire_BusOutputDirection(OneWire_t *ow);
-
-/**
- * OneWire_OutputLow
- *
- * Purpose:
- *   Drive the 1 Wire data pin low.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
- */
-static void OneWire_OutputLow(OneWire_t *ow);
-
-/**
- * OneWire_OutputHigh
- *
- * Purpose:
- *   Write a high level to the 1 Wire data pin output latch.
- *   On an open drain pin, the line will only go high after the pin is
- *   released and pulled up externally.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
- */
-static void OneWire_OutputHigh(OneWire_t *ow);
-
-/* ---------------------------------------------------------------------
- * Private Functions
- * ------------------------------------------------------------------- */
-
-/**
- * OneWire_DelayUs
- *
- * Purpose:
- *   Delay for a specified number of microseconds using the configured
- *   hardware timer.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *   us - Delay time in microseconds
- *
- * Outputs:
- *   None
- */
-static void OneWire_DelayUs(OneWire_t *ow, uint16_t us)
+void ow_init(ow_t *handle, const ow_init_t *init)
 {
-    /* Restart the timer count so the delay begins from zero. */
-    ow->htim->Instance->CNT = 0;
+  assert_param(handle != NULL);
+  assert_param(init != NULL);
+  assert_param(init->tim_handle != NULL);
+  assert_param(init->tim_cb != NULL);
 
-    /* Busy wait until the requested number of microseconds has elapsed. */
-    while (ow->htim->Instance->CNT <= us)
+  /* Save configuration */
+#if (OW_DUAL_PINS == 0)
+  assert_param(init->gpio != NULL);
+  assert_param(IS_GPIO_PIN(init->pin) != false);
+  handle->config.pin_set = init->pin;
+  handle->config.pin_reset = init->pin << 16UL;
+  handle->config.pin_read = init->pin;
+  handle->config.gpio = init->gpio;
+#else
+  assert_param(init->gpio_tx != NULL);
+  assert_param(init->gpio_rx != NULL);
+  assert_param(IS_GPIO_PIN(init->pin_rx) != false);
+  assert_param(IS_GPIO_PIN(init->pin_tx) != false);
+#if (OW_INVERT_TX == 1)
+  handle->config.pin_set = init->pin_tx;
+  handle->config.pin_reset = init->pin_tx << 16UL;
+#else
+  handle->config.pin_reset = init->pin_tx;
+  handle->config.pin_set = init->pin_tx << 16UL;
+#endif
+  handle->config.gpio_rx = init->gpio_rx;
+  handle->config.pin_read = init->pin_rx;
+  handle->config.gpio = init->gpio_tx;
+#endif
+  handle->config.tim_handle = init->tim_handle;
+  handle->config.done_cb = init->done_cb;
+
+  /* ROM ID Filter, 0 == Accept All */
+#if (OW_MAX_DEVICE > 1)
+  handle->rom_id_filter = init->rom_id_filter;
+#endif
+
+  /* Register user timer callback for timing events */
+  HAL_TIM_RegisterCallback(handle->config.tim_handle, HAL_TIM_PERIOD_ELAPSED_CB_ID, init->tim_cb);
+
+  /* Set bus to idle state (high) */
+  ow_write_bit(handle, true);
+}
+
+/*************************************************************************************************/
+/**
+ * @brief Handle 1-Wire timer callback and call state handlers.
+ * @param[in] handle: Pointer to the 1-Wire handle.
+ */
+void ow_callback(ow_t *handle)
+{
+  assert_param(handle != NULL);
+
+  switch (handle->state)
+  {
+    /* Ongoing data transfer */
+    case OW_STATE_XFER:
+      ow_state_xfer(handle);
+      break;
+
+#if (OW_MAX_DEVICE > 1)
+    /* ROM search operation */
+    case OW_STATE_SEARCH:
+      ow_state_search(handle);
+      break;
+#endif
+
+    /* Any invalid state -> stop */
+    default:
+      ow_stop(handle);
+      break;
+  }
+}
+
+/*************************************************************************************************/
+/**
+ * @brief Calculate 8-bit CRC for given data.
+ * @param[in] data: Pointer to the data buffer.
+ * @param[in] len: Length of the data in bytes.
+ * @retval Calculated CRC8 value.
+ */
+uint8_t ow_crc(const uint8_t *data, uint16_t len)
+{
+  uint8_t crc = 0;
+  assert_param(data != NULL);
+  assert_param(len > 0);
+
+  while (len--)
+  {
+    uint8_t inbyte = *data++;
+    for (uint8_t i = 8; i > 0; i--)
     {
-        /* Intentionally empty. */
+      /* Compute CRC using polynomial x^8 + x^5 + x^4 + 1 (0x8C) */
+      uint8_t mix = (uint8_t)(crc ^ inbyte) & 0x01;
+      crc >>= 1;
+      if (mix)
+      {
+        crc ^= 0x8C;
+      }
+      inbyte >>= 1;
     }
+  }
+  return crc;
 }
 
+/*************************************************************************************************/
 /**
- * OneWire_BusInputDirection
- *
- * Purpose:
- *   Reconfigure the 1 Wire pin as an input so the bus is released and the
- *   external pullup resistor can pull the line high.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
+ * @brief Check if 1-Wire bus is busy.
+ * @param[in] handle: Pointer to the 1-Wire handle.
+ * @retval true if busy, false if idle
  */
-static void OneWire_BusInputDirection(OneWire_t *ow)
+bool ow_is_busy(ow_t *handle)
 {
-    GPIO_InitTypeDef GPIO_InitStruct;
-
-    /* Configure the data pin as a floating input.
-     * The 1 Wire bus uses an external pullup resistor. */
-    GPIO_InitStruct.Pin   = ow->GPIO_Pin;
-    GPIO_InitStruct.Mode  = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
-
-    /* Apply the new pin configuration. */
-    HAL_GPIO_Init(ow->GPIOx, &GPIO_InitStruct);
+  assert_param(handle != NULL);
+  return (handle->state != OW_STATE_IDLE) ? true : false;
 }
 
+/*************************************************************************************************/
 /**
- * OneWire_BusOutputDirection
- *
- * Purpose:
- *   Reconfigure the 1 Wire pin as an open drain output so the master can
- *   pull the line low during reset, write, and read slots.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
+ * @brief Get the last 1-Wire error.
+ * @param[in] handle: Pointer to the 1-Wire handle.
+ * @retval Last error code (ow_err_t)
  */
-static void OneWire_BusOutputDirection(OneWire_t *ow)
+ow_err_t ow_last_error(ow_t *handle)
 {
-    GPIO_InitTypeDef GPIO_InitStruct;
-
-    /* Configure the data pin as open drain output.
-     * The bus is never actively driven high. */
-    GPIO_InitStruct.Pin   = ow->GPIO_Pin;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
-
-    /* Apply the new pin configuration. */
-    HAL_GPIO_Init(ow->GPIOx, &GPIO_InitStruct);
+  assert_param(handle != NULL);
+  return handle->error;
 }
 
+#if (OW_MAX_DEVICE == 1)
+/*************************************************************************************************/
 /**
- * OneWire_OutputLow
- *
- * Purpose:
- *   Pull the 1 Wire bus low by writing the output latch low.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
+ * @brief Start reading a single ROM ID from the 1-Wire bus.
+ * @param[in] handle: Pointer to the 1-Wire handle.
+ * @retval Last error code (ow_err_t)
  */
-static void OneWire_OutputLow(OneWire_t *ow)
+ow_err_t ow_update_rom_id(ow_t *handle)
 {
-    /* Reset the output bit to drive the line low. */
-    ow->GPIOx->BSRR = ((uint32_t)ow->GPIO_Pin << 16);
-}
+  assert_param(handle != NULL);
 
-/**
- * OneWire_OutputHigh
- *
- * Purpose:
- *   Set the output latch high for the 1 Wire data pin.
- *   Because the pin is open drain, the line only rises after the bus is
- *   released and the external pullup resistor pulls it high.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
- */
-static void OneWire_OutputHigh(OneWire_t *ow)
-{
-    /* Set the output bit high in the output latch. */
-    ow->GPIOx->BSRR = ow->GPIO_Pin;
-}
-
-/* ---------------------------------------------------------------------
- * Public Functions
- * ------------------------------------------------------------------- */
-
-/**
- * OneWire_Init
- *
- * Purpose:
- *   Initialize a 1 Wire bus instance with its GPIO pin and timing source.
- *
- * Inputs:
- *   ow       - Pointer to the 1 Wire bus object to initialize
- *   GPIOx    - GPIO port used by the 1 Wire bus
- *   GPIO_Pin - GPIO pin mask used by the 1 Wire bus
- *   htim     - Pointer to a timer configured for 1 microsecond per tick
- *
- * Outputs:
- *   None
- */
-void OneWire_Init(OneWire_t *ow,
-                  GPIO_TypeDef *GPIOx,
-                  uint16_t GPIO_Pin,
-                  TIM_HandleTypeDef *htim)
-{
-    /* Store the hardware resources used by this bus instance. */
-    ow->GPIOx    = GPIOx;
-    ow->GPIO_Pin = GPIO_Pin;
-    ow->htim     = htim;
-
-    /* Reset ROM search state so enumeration begins from a clean state. */
-    ow->LastDiscrepancy       = 0;
-    ow->LastFamilyDiscrepancy = 0;
-    ow->LastDeviceFlag        = 0;
-
-    /* Clear the cached ROM buffer. */
-    for (uint8_t i = 0; i < 8; i++)
+  do
+  {
+    /* Start 1-Wire communication */
+    handle->error = ow_start(handle);
+    if (handle->error != OW_ERR_NONE)
     {
-        ow->ROM_NO[i] = 0;
+        /* Stop bus if start failed */
+        ow_stop(handle);
+        break;
     }
 
-    /* Leave the bus in its idle released state.
-     * Write the output latch high, then release the line so the external
-     * pullup resistor holds the bus high. */
-    OneWire_OutputHigh(ow);
-    OneWire_BusInputDirection(ow);
+    /* Set state to transfer for next operation */
+    handle->state = OW_STATE_XFER;
+
+    /* Prepare buffer to read ROM command (1 byte command + 8 byte response) */
+    handle->buf.data[0]   = OW_CMD_READ_ROM;
+    handle->buf.write_len = 1;
+    handle->buf.read_len  = 8;
+
+  } while (0);
+
+  /* Return result of operation */
+  return handle->error;
 }
 
+#else
+/*************************************************************************************************/
 /**
- * OneWire_Reset
- *
- * Purpose:
- *   Issue a 1 Wire reset pulse and check for a presence pulse.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   Returns 0 if at least one device responded.
- *   Returns 1 if no presence pulse was detected.
+ * @brief Start search to update all ROM IDs on the 1-Wire bus.
+ * @param[in] handle: Pointer to the 1-Wire handle.
+ * @retval Last error code (ow_err_t)
  */
-uint8_t OneWire_Reset(OneWire_t *ow)
+ow_err_t ow_update_rom_id(ow_t *handle)
 {
-    uint8_t presence;
+  assert_param(handle != NULL);
 
-    /* Drive the bus low for the reset pulse. */
-    OneWire_OutputLow(ow);
-    OneWire_BusOutputDirection(ow);
-    OneWire_DelayUs(ow, 480);
-
-    /* Release the bus and wait into the presence detect window. */
-    OneWire_BusInputDirection(ow);
-    OneWire_DelayUs(ow, 70);
-
-    /* A responding device pulls the line low during the presence pulse.
-     * High means no device responded. */
-    presence = HAL_GPIO_ReadPin(ow->GPIOx, ow->GPIO_Pin);
-
-    /* Wait for the remainder of the reset recovery period. */
-    OneWire_DelayUs(ow, 410);
-
-    return presence;
-}
-
-/**
- * OneWire_WriteBit
- *
- * Purpose:
- *   Write one bit to the 1 Wire bus.
- *
- * Inputs:
- *   ow  - Pointer to the initialized 1 Wire bus object
- *   bit - Bit value to write
- *
- * Outputs:
- *   None
- */
-void OneWire_WriteBit(OneWire_t *ow, uint8_t bit)
-{
-    if (bit)
+  do
+  {
+    /* Start 1-Wire communication */
+    handle->error = ow_start(handle);
+    if (handle->error != OW_ERR_NONE)
     {
-        /* Write '1' by pulling low briefly, then releasing the line. */
-        OneWire_OutputLow(ow);
-        OneWire_BusOutputDirection(ow);
-        OneWire_DelayUs(ow, 6);
+      /* Stop bus if start failed */
+      ow_stop(handle);
+      break;
+    }
 
-        OneWire_BusInputDirection(ow);
-        OneWire_DelayUs(ow, 64);
+    /* Prepare for ROM search */
+    handle->state = OW_STATE_SEARCH;
+    handle->buf.data[0] = OW_CMD_SEARCH_ROM;
+    handle->rom_id_found = 0;
+
+    /* Clear previous search and ROM ID data */
+    memset(&handle->search, 0, sizeof(ow_search_t));
+    memset(handle->rom_id, 0, sizeof(handle->rom_id));
+
+  } while (0);
+
+  return handle->error;
+}
+#endif
+
+/*************************************************************************************************/
+/**
+ * @brief Transfer a command and optional data to/from a specific 1-Wire device by Skip ROM.
+ * @param[in] handle Pointer to the 1-Wire handle structure.
+ * @param[in] fn_cmd Function or command byte to send.
+ * @param[in] w_data Pointer to the data buffer to write (can be NULL if w_len is 0).
+ * @param[in] w_len Number of bytes to write from w_data (can be 0).
+ * @param[in] r_len Number of bytes to read (can be 0).
+ * @retval Error code (ow_err_t).
+ */
+ow_err_t ow_xfer(ow_t *handle, uint8_t fn_cmd, const uint8_t *w_data, uint16_t w_len, uint16_t r_len)
+{
+  assert_param(handle != NULL);
+
+  do
+  {
+    /* Check if w_data is NULL but requested write data */
+    if ((w_data == NULL) && (w_len > 0))
+    {
+      handle->error = OW_ERR_LEN;
+      ow_stop(handle);
+      break;
+    }
+
+    /* Check if requested read/read length exceeds buffer */
+    if (w_len + r_len > OW_MAX_DATA_LEN)
+    {
+      handle->error = OW_ERR_LEN;
+      ow_stop(handle);
+      break;
+    }
+
+    /* Start 1-Wire communication */
+    handle->error = ow_start(handle);
+    if (handle->error != OW_ERR_NONE)
+    {
+      ow_stop(handle);
+      break;
+    }
+
+    /* Prepare transfer buffer */
+    handle->state = OW_STATE_XFER;
+
+    /* Skip ROM for single device */
+    handle->buf.data[0] = OW_CMD_SKIP_ROM;
+
+    /* Send function command */
+    handle->buf.data[1] = fn_cmd;
+
+    /* Copy user data if provided */
+    if (w_data != NULL)
+    {
+      for (uint16_t idx = 0; idx < w_len; idx++)
+      {
+        handle->buf.data[2 + idx] = w_data[idx];
+      }
+      handle->buf.write_len = w_len + 2;
     }
     else
     {
-        /* Write '0' by holding the line low for most of the slot. */
-        OneWire_OutputLow(ow);
-        OneWire_BusOutputDirection(ow);
-        OneWire_DelayUs(ow, 60);
-
-        OneWire_BusInputDirection(ow);
-        OneWire_DelayUs(ow, 10);
-    }
-}
-
-/**
- * OneWire_ReadBit
- *
- * Purpose:
- *   Read one bit from the 1 Wire bus.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   Returns the sampled bit value.
- */
-uint8_t OneWire_ReadBit(OneWire_t *ow)
-{
-    uint8_t bit = 0;
-
-    /* Start the read slot by pulling the line low briefly. */
-    OneWire_OutputLow(ow);
-    OneWire_BusOutputDirection(ow);
-    OneWire_DelayUs(ow, 2);
-
-    /* Release the bus so the slave can drive its response bit. */
-    OneWire_BusInputDirection(ow);
-    OneWire_DelayUs(ow, 10);
-
-    /* Sample the bus during the valid read window. */
-    if (HAL_GPIO_ReadPin(ow->GPIOx, ow->GPIO_Pin))
-    {
-        bit = 1;
+      handle->buf.write_len = 2;
     }
 
-    /* Wait for the rest of the read slot to complete. */
-    OneWire_DelayUs(ow, 50);
+    /* Set expected read length */
+    handle->buf.read_len  = r_len;
 
-    return bit;
+  } while (0);
+
+  return handle->error;
 }
 
+#if (OW_MAX_DEVICE > 1)
+/*************************************************************************************************/
 /**
- * OneWire_WriteByte
- *
- * Purpose:
- *   Write one byte to the 1 Wire bus, least significant bit first.
- *
- * Inputs:
- *   ow   - Pointer to the initialized 1 Wire bus object
- *   byte - Byte value to write
- *
- * Outputs:
- *   None
+ * @brief Transfer a command and optional data to/from a specific 1-Wire device by ROM ID index.
+ * @param[in] handle Pointer to the 1-Wire handle structure.
+ * @param[in] rom_id Index of the target ROM ID in the handle's rom_id array.
+ * @param[in] fn_cmd Function or command byte to send.
+ * @param[in] w_data Pointer to the data buffer to write (can be NULL if w_len is 0).
+ * @param[in] w_len Number of bytes to write from w_data (can be 0).
+ * @param[in] r_len Number of bytes to read into the internal buffer (can be 0).
+ * @retval Error code (ow_err_t).
  */
-void OneWire_WriteByte(OneWire_t *ow, uint8_t byte)
+ow_err_t ow_xfer_by_id(ow_t *handle, uint8_t rom_id, uint8_t fn_cmd, const uint8_t *w_data, uint16_t w_len, uint16_t r_len)
 {
-    uint8_t i = 8;
+  assert_param(handle != NULL);
 
-    do
+  do
+  {
+    /* Check if w_data is NULL but requested write data */
+    if ((w_data == NULL) && (w_len > 0))
     {
-        /* 1 Wire bytes are transmitted least significant bit first. */
-        OneWire_WriteBit(ow, byte & 0x01);
-        byte >>= 1;
-    } while (--i);
-}
+      handle->error = OW_ERR_LEN;
+      ow_stop(handle);
+      break;
+    }
 
-/**
- * OneWire_ReadByte
- *
- * Purpose:
- *   Read one byte from the 1 Wire bus, least significant bit first.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   Returns the byte read from the bus.
- */
-uint8_t OneWire_ReadByte(OneWire_t *ow)
-{
-    uint8_t i = 8;
-    uint8_t byte = 0;
-
-    do
+    /* Check if requested read/read length exceeds buffer */
+    if (w_len + r_len > OW_MAX_DATA_LEN)
     {
-        /* Shift the accumulated byte right and insert the newly read bit
-         * into the most significant position so the final result ends up
-         * in normal LSB first order. */
-        byte >>= 1;
-        byte |= (OneWire_ReadBit(ow) << 7);
-    } while (--i);
+      handle->error = OW_ERR_LEN;
+      ow_stop(handle);
+      break;
+    }
 
-    return byte;
-}
-
-/**
- * OneWire_ResetSearch
- *
- * Purpose:
- *   Clear the internal ROM search state so a fresh device search can begin.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   None
- */
-void OneWire_ResetSearch(OneWire_t *ow)
-{
-    /* Clear all search tracking state. */
-    ow->LastDiscrepancy       = 0;
-    ow->LastDeviceFlag        = 0;
-    ow->LastFamilyDiscrepancy = 0;
-}
-
-/**
- * OneWire_Search
- *
- * Purpose:
- *   Perform a 1 Wire ROM search transaction using the supplied command.
- *
- * Inputs:
- *   ow      - Pointer to the initialized 1 Wire bus object
- *   command - Search style ROM command
- *
- * Outputs:
- *   Returns 1 if a ROM code was found.
- *   Returns 0 if no device was found or an error occurred.
- */
-uint8_t OneWire_Search(OneWire_t *ow, uint8_t command)
-{
-    uint8_t id_bit_number;
-    uint8_t last_zero;
-    uint8_t rom_byte_number;
-    uint8_t search_result;
-    uint8_t id_bit;
-    uint8_t cmp_id_bit;
-    uint8_t rom_byte_mask;
-    uint8_t search_direction;
-
-    id_bit_number  = 1;
-    last_zero      = 0;
-    rom_byte_number = 0;
-    rom_byte_mask  = 1;
-    search_result  = 0;
-
-    /* Stop immediately if the previous search already found the last device. */
-    if (!ow->LastDeviceFlag)
+    /* Validate ROM ID index */
+    if ((handle->rom_id_found == 0) || (rom_id >= handle->rom_id_found))
     {
-        /* Reset the bus and verify that at least one device is present. */
-        if (OneWire_Reset(ow))
+      handle->error = OW_ERR_ROM_ID;
+      ow_stop(handle);
+      break;
+    }
+
+    /* Start 1-Wire communication */
+    handle->error = ow_start(handle);
+    if (handle->error != OW_ERR_NONE)
+    {
+      ow_stop(handle);
+      break;
+    }
+
+    /* Prepare transfer buffer */
+    handle->state = OW_STATE_XFER;
+
+    /* Select device by ROM */
+    handle->buf.data[0] = OW_CMD_MATCH_ROM;
+    for (uint8_t idx = 0; idx < 8; idx++)
+    {
+      handle->buf.data[1 + idx] = handle->rom_id[rom_id].array[idx];
+    }
+
+    /* Function command */
+    handle->buf.data[9] = fn_cmd;
+
+    /* Copy user data if provided */
+    if (w_data != NULL)
+    {
+      for (uint16_t idx = 0; idx < w_len; idx++)
+      {
+        handle->buf.data[10 + idx] = w_data[idx];
+      }
+      handle->buf.write_len = w_len + 10;
+    }
+    else
+    {
+      handle->buf.write_len = 10;
+    }
+
+    /* Set expected read length */
+    handle->buf.read_len  = r_len;
+
+  } while (0);
+
+  return handle->error;
+}
+
+/*************************************************************************************************/
+/**
+ * @brief Get number of detected 1-Wire devices.
+ * @param[in] handle: Pointer to 1-Wire handle.
+ * @retval Count of found devices
+ */
+uint8_t ow_devices(ow_t *handle)
+{
+  assert_param(handle != NULL);
+  return handle->rom_id_found;
+}
+#endif
+
+/*************************************************************************************************/
+/**
+ * @brief Retrieve read response data from the 1-Wire buffer.
+ * @param[in] handle: Pointer to the 1-Wire handle.
+ * @param[in] data: Pointer to user buffer to store the response.
+ * @param[in] data_size: Size of the user buffer in bytes.
+ * @retval Number of bytes copied to the user buffer.
+ */
+uint16_t ow_read_resp(ow_t *handle, uint8_t *data, uint16_t data_size)
+{
+  assert_param(handle != NULL);
+  assert_param(data != NULL);
+
+  uint16_t len = handle->buf.read_len;
+
+  /* Adjust length if user buffer is smaller */
+  if (data_size < len)
+  {
+    len = data_size;
+  }
+
+  /* Defensive: ensure we do not read past internal buffer */
+  if ((uint32_t)(handle->buf.write_len) + (uint32_t)len > sizeof(handle->buf.data))
+  {
+    /* Truncate to available bytes */
+    if (handle->buf.write_len < sizeof(handle->buf.data))
+    {
+      len = (uint16_t)(sizeof(handle->buf.data) - (uint32_t)handle->buf.write_len);
+    }
+    else
+    {
+      return 0;
+    }
+  }
+
+  /* Copy response data from internal buffer to user buffer */
+  for (uint16_t idx = 0; idx < len; ++idx)
+  {
+    data[idx] = handle->buf.data[handle->buf.write_len + idx];
+  }
+
+  return len;
+}
+
+/*************************************************************************************************/
+/** Private Function Implementations **/
+/*************************************************************************************************/
+
+/*************************************************************************************************/
+/**
+ * @brief Start a 1-Wire transfer on the bus.
+ * @param[in] handle: Pointer to the 1-Wire handle.
+ * @retval OW_ERR_NONE on success, or error code (OW_ERR_BUSY, OW_ERR_BUS).
+ */
+ow_err_t ow_start(ow_t *handle)
+{
+  ow_err_t ow_err = OW_ERR_NONE;
+  assert_param(handle != NULL);
+
+  do
+  {
+    /* Ensure bus is idle before starting transfer */
+    if (handle->state != OW_STATE_IDLE)
+    {
+      ow_err = OW_ERR_BUSY;
+      break;
+    }
+
+    /* Pull bus high and check if line is idle */
+    ow_write_bit(handle, true);
+    if (!ow_read_bit(handle))
+    {
+      ow_err = OW_ERR_BUS;
+      break;
+    }
+
+    /* Clear timer interrupt and reset internal buffer */
+    __HAL_TIM_CLEAR_IT(handle->config.tim_handle, 0xFFFFFFFFUL);
+    memset(&handle->buf, 0, sizeof(ow_buf_t));
+
+    /* Configure timer for reset detection */
+    __HAL_TIM_SET_COUNTER(handle->config.tim_handle, 0);
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST_DET - 1);
+    HAL_TIM_Base_Start_IT(handle->config.tim_handle);
+
+  } while (0);
+
+  return ow_err;
+}
+
+/*************************************************************************************************/
+/**
+ * @brief Stop 1-Wire transfer and release the bus.
+ * @param[in] handle Pointer to the 1-Wire handle.
+ */
+void ow_stop(ow_t *handle)
+{
+  assert_param(handle != NULL);
+
+  /* Stop timer interrupts */
+  HAL_TIM_Base_Stop_IT(handle->config.tim_handle);
+
+  /* Release bus (set high) */
+  ow_write_bit(handle, true);
+
+  /* Set state to idle */
+  handle->state = OW_STATE_IDLE;
+
+  /* Call user callback if registered */
+  if (handle->config.done_cb != NULL)
+  {
+    handle->config.done_cb(handle->error);
+  }
+}
+
+/*************************************************************************************************/
+/**
+ * @brief 1-Wire state machine: handle transfer phases (reset, write, read).
+ * @param[in] handle Pointer to the 1-Wire handle.
+ */
+__STATIC_FORCEINLINE void ow_state_xfer(ow_t *handle)
+{
+  assert_param(handle != NULL);
+
+  switch (handle->buf.bit_ph)
+  {
+    /************ Reset phase: pull bus low ************/
+    case 0:
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST - 1);
+      ow_write_bit(handle, false);
+      handle->buf.bit_ph++;
+      break;
+
+    /************ Reset phase: release bus (high) ************/
+    case 1:
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST_DET - 1);
+      ow_write_bit(handle, true);
+      handle->buf.bit_ph++;
+      break;
+
+    /************ Reset phase: check presence pulse ************/
+    case 2:
+      if (ow_read_bit(handle) != 0)
+      {
+        handle->error = OW_ERR_RESET;
+        ow_stop(handle);
+      }
+      else
+      {
+        __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST - 1);
+        handle->buf.bit_ph++;
+      }
+      break;
+
+    /************ Writing, phase 1: pull low ************/
+    case 3:
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle,
+        (handle->buf.data[handle->buf.byte_idx] & (1 << handle->buf.bit_idx)) ? OW_TIM_WRITE_LOW - 1 : OW_TIM_WRITE_HIGH - 1);
+      ow_write_bit(handle, false);
+      handle->buf.bit_ph++;
+      break;
+
+    /************ Writing, phase 2: release bus ************/
+    case 4:
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle,
+        (handle->buf.data[handle->buf.byte_idx] & (1 << handle->buf.bit_idx)) ? OW_TIM_WRITE_HIGH - 1 : OW_TIM_WRITE_LOW - 1);
+      ow_write_bit(handle, true);
+      handle->buf.bit_idx++;
+
+      /* Move to next byte or reading phase */
+      if (handle->buf.bit_idx == 8)
+      {
+        handle->buf.bit_idx = 0;
+        handle->buf.byte_idx++;
+        if (handle->buf.byte_idx == handle->buf.write_len)
         {
-            ow->LastDiscrepancy       = 0;
-            ow->LastDeviceFlag        = 0;
-            ow->LastFamilyDiscrepancy = 0;
-            return 0;
+          if (handle->buf.read_len > 0)
+          {
+            /* Start reading phase */
+            handle->buf.bit_ph = 5;
+            handle->buf.byte_idx = 0;
+          }
+          else
+          {
+            /* Writing complete, no reading */
+            handle->state = OW_STATE_DONE;
+          }
         }
-
-        /* Send the search command that begins ROM enumeration. */
-        OneWire_WriteByte(ow, command);
-
-        /* Walk through all 64 ROM bits using the standard search algorithm. */
-        do
+        else
         {
-            /* Read the current ROM bit and its complement from the bus. */
-            id_bit     = OneWire_ReadBit(ow);
-            cmp_id_bit = OneWire_ReadBit(ow);
+          /* Continue writing next byte */
+          handle->buf.bit_ph = 3;
+        }
+      }
+      else
+      {
+        /* Continue writing next bit */
+        handle->buf.bit_ph = 3;
+      }
+      break;
 
-            /* A 1/1 response indicates a search error or no participating device. */
-            if ((id_bit == 1) && (cmp_id_bit == 1))
+    /************ Reading, phase 1: pull low ************/
+    case 5:
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_LOW - 1);
+      ow_write_bit(handle, false);
+      handle->buf.bit_ph++;
+      break;
+
+    /************ Reading, phase 2: release bus ************/
+    case 6:
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_SAMPLE - 1);
+      ow_write_bit(handle, true);
+      handle->buf.bit_ph++;
+      break;
+
+    /************ Reading, phase 3: sample bus ************/
+    case 7:
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_HIGH - 1);
+      if (ow_read_bit(handle))
+      {
+        handle->buf.data[handle->buf.write_len + handle->buf.byte_idx] |= (1 << handle->buf.bit_idx);
+      }
+
+      /* Update bit/byte counters */
+      handle->buf.bit_ph = 5;
+      handle->buf.bit_idx++;
+      if (handle->buf.bit_idx == 8)
+      {
+        handle->buf.bit_idx = 0;
+        handle->buf.byte_idx++;
+        if (handle->buf.byte_idx == handle->buf.read_len)
+        {
+#if (OW_MAX_DEVICE == 1)
+          /* Single device: verify ROM ID if READ_ROM command */
+          if (handle->buf.data[0] == OW_CMD_READ_ROM)
+          {
+            if (ow_crc(&handle->buf.data[1], 7) == handle->buf.data[7])
             {
-                break;
+              memcpy(handle->rom_id[0].array, &handle->buf.data[1], 8);
+              handle->error = OW_ERR_NONE;
             }
             else
             {
-                if (id_bit != cmp_id_bit)
-                {
-                    /* No discrepancy at this position.
-                     * All active devices share the same bit value. */
-                    search_direction = id_bit;
-                }
-                else
-                {
-                    /* A 0/0 response means there is a discrepancy between devices.
-                     * Choose a branch based on previous search history. */
-                    if (id_bit_number < ow->LastDiscrepancy)
-                    {
-                        search_direction = ((ow->ROM_NO[rom_byte_number] & rom_byte_mask) > 0);
-                    }
-                    else
-                    {
-                        search_direction = (id_bit_number == ow->LastDiscrepancy);
-                    }
-
-                    /* Track the most recent zero branch so the next search can
-                     * revisit the alternate path. */
-                    if (search_direction == 0)
-                    {
-                        last_zero = id_bit_number;
-
-                        if (last_zero < 9)
-                        {
-                            ow->LastFamilyDiscrepancy = last_zero;
-                        }
-                    }
-                }
-
-                /* Store the chosen branch bit into the cached ROM buffer. */
-                if (search_direction == 1)
-                {
-                    ow->ROM_NO[rom_byte_number] |= rom_byte_mask;
-                }
-                else
-                {
-                    ow->ROM_NO[rom_byte_number] &= (uint8_t)~rom_byte_mask;
-                }
-
-                /* Write the selected search branch back to the bus. */
-                OneWire_WriteBit(ow, search_direction);
-
-                /* Advance to the next ROM bit position. */
-                id_bit_number++;
-                rom_byte_mask <<= 1;
-
-                /* Move to the next ROM byte after 8 bits. */
-                if (rom_byte_mask == 0)
-                {
-                    rom_byte_number++;
-                    rom_byte_mask = 1;
-                }
+              handle->error = OW_ERR_ROM_ID;
             }
-        } while (rom_byte_number < 8);
-
-        /* A full 64 bit ROM was discovered successfully. */
-        if (!(id_bit_number < 65))
-        {
-            ow->LastDiscrepancy = last_zero;
-
-            if (ow->LastDiscrepancy == 0)
-            {
-                ow->LastDeviceFlag = 1;
-            }
-
-            search_result = 1;
+          }
+#endif
+          handle->state = OW_STATE_DONE;
         }
-    }
+      }
+      break;
 
-    /* If the search failed, clear state so the next search restarts cleanly. */
-    if (!search_result || !ow->ROM_NO[0])
+    default:
+      break;
+  }
+}
+
+#if (OW_MAX_DEVICE > 1)
+/*************************************************************************************************/
+/**
+ * @brief  1-Wire ROM search state machine.
+ * @param  handle: Pointer to 1-Wire handle.
+ * @retval None
+ *
+ * @details
+ * Implements non-blocking search, handles reset, read/write bits,
+ * resolves discrepancies, stores found ROMs, and sets state done.
+ */
+__STATIC_FORCEINLINE void ow_state_search(ow_t *handle)
+{
+  assert_param(handle != NULL);
+
+  switch (handle->buf.bit_ph)
+  {
+  /************ Reset phase: pull bus low ************/
+  case 0:
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST - 1);
+    ow_write_bit(handle, false);
+    handle->buf.bit_ph++;
+    break;
+
+    /************ Reset phase: release bus (high) ************/
+  case 1:
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST_DET - 1);
+    ow_write_bit(handle, true);
+    handle->buf.bit_ph++;
+    break;
+
+  /************ Reset phase: check presence pulse ************/
+  case 2:
+    if (ow_read_bit(handle) != 0)
     {
-        ow->LastDiscrepancy       = 0;
-        ow->LastDeviceFlag        = 0;
-        ow->LastFamilyDiscrepancy = 0;
-        search_result             = 0;
+      handle->error = OW_ERR_RESET;
+      ow_stop(handle);
     }
-
-    return search_result;
-}
-
-/**
- * OneWire_First
- *
- * Purpose:
- *   Reset search state and return the first device found on the bus.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   Returns 1 if a device was found.
- *   Returns 0 if no device was found.
- */
-uint8_t OneWire_First(OneWire_t *ow)
-{
-    /* Start a fresh ROM search from the beginning of the tree. */
-    OneWire_ResetSearch(ow);
-
-    return OneWire_Search(ow, ONEWIRE_CMD_SEARCHROM);
-}
-
-/**
- * OneWire_Next
- *
- * Purpose:
- *   Continue the current ROM search and return the next device found.
- *
- * Inputs:
- *   ow - Pointer to the initialized 1 Wire bus object
- *
- * Outputs:
- *   Returns 1 if another device was found.
- *   Returns 0 if no more devices were found.
- */
-uint8_t OneWire_Next(OneWire_t *ow)
-{
-    /* Continue the search using the current saved discrepancy state. */
-    return OneWire_Search(ow, ONEWIRE_CMD_SEARCHROM);
-}
-
-/**
- * OneWire_Select
- *
- * Purpose:
- *   Select a specific device by sending Match ROM followed by its address.
- *
- * Inputs:
- *   ow   - Pointer to the initialized 1 Wire bus object
- *   addr - Pointer to the 8 byte ROM address
- *
- * Outputs:
- *   None
- */
-void OneWire_Select(OneWire_t *ow, uint8_t *addr)
-{
-    uint8_t i;
-
-    /* Send the Match ROM command so only the addressed device responds. */
-    OneWire_WriteByte(ow, ONEWIRE_CMD_MATCHROM);
-
-    /* Transmit the full 64 bit ROM code, least significant byte first. */
-    for (i = 0; i < 8; i++)
+    else
     {
-        OneWire_WriteByte(ow, addr[i]);
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_RST - 1);
+      handle->buf.bit_ph++;
     }
-}
+    break;
 
-/**
- * OneWire_GetFullROM
- *
- * Purpose:
- *   Copy the most recently discovered ROM code into the caller buffer.
- *
- * Inputs:
- *   ow        - Pointer to the initialized 1 Wire bus object
- *   firstByte - Pointer to an 8 byte destination buffer
- *
- * Outputs:
- *   None
- */
-void OneWire_GetFullROM(OneWire_t *ow, uint8_t *firstByte)
-{
-    uint8_t i;
-
-    /* Copy the cached 64 bit ROM code to the caller buffer. */
-    for (i = 0; i < 8; i++)
+  /************ Writing, phase 1: pull low ************/
+  case 3:
+    if (handle->buf.data[0] & (1 << handle->buf.bit_idx))
     {
-        firstByte[i] = ow->ROM_NO[i];
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_LOW - 1);
     }
-}
-
-/**
- * OneWire_CRC8
- *
- * Purpose:
- *   Compute the Dallas/Maxim CRC8 for a block of bytes.
- *
- * Inputs:
- *   addr - Pointer to the input data
- *   len  - Number of bytes to process
- *
- * Outputs:
- *   Returns the computed CRC8 value.
- */
-uint8_t OneWire_CRC8(uint8_t *addr, uint8_t len)
-{
-    uint8_t crc = 0;
-    uint8_t inbyte;
-    uint8_t i;
-    uint8_t mix;
-
-    /* Process each input byte one bit at a time. */
-    while (len--)
+    else
     {
-        inbyte = *addr++;
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_HIGH - 1);
+    }
+    ow_write_bit(handle, false);
+    handle->buf.bit_ph++;
+    break;
 
-        for (i = 8; i; i--)
+  /************ Writing, phase 2: release bus ************/
+  case 4:
+    if (handle->buf.data[0] & (1 << handle->buf.bit_idx))
+    {
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_HIGH - 1);
+    }
+    else
+    {
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_LOW - 1);
+    }
+    ow_write_bit(handle, true);
+    handle->buf.bit_idx++;
+
+    /* command complete */
+    if (handle->buf.bit_idx == 8)
+    {
+      handle->buf.bit_idx = 0;
+      /* Start reading phase */
+      handle->buf.bit_ph = 5;
+    }
+    else
+    {
+      /* Writing next command bit */
+      handle->buf.bit_ph = 3;
+    }
+    break;
+
+  /************ Reading, phase 1: pull low ************/
+  case 5:
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_LOW - 1);
+    ow_write_bit(handle, false);
+    handle->buf.bit_ph++;
+    break;
+
+  /************ reading bit, phase 2 ************/
+  case 6:
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_SAMPLE - 1);
+    ow_write_bit(handle, true);
+    handle->buf.bit_ph++;
+    break;
+
+  /************ reading bit, phase 3 ************/
+  case 7:
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_HIGH - 1);
+    if (ow_read_bit(handle))
+    {
+      handle->search.val = OW_VAL_1;
+    }
+    else
+    {
+      handle->search.val = OW_VAL_DIFF;
+    }
+    handle->buf.bit_ph++;
+    break;
+
+  /************ reading complement bit, phase 1 ************/
+  case 8:
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_LOW - 1);
+    ow_write_bit(handle, false);
+    handle->buf.bit_ph++;
+    break;
+
+  /************ Reading, phase 2: release bus ************/
+  case 9:
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_SAMPLE - 1);
+    ow_write_bit(handle, true);
+    handle->buf.bit_ph++;
+    break;
+
+  /************ Reading, phase 3: sample bus ************/
+  case 10:
+    __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_READ_HIGH - 1);
+    if (ow_read_bit(handle))
+    {
+      handle->search.val |= OW_VAL_0;
+    }
+    handle->buf.bit_ph++;
+
+    /* resolve discrepancy */
+    /* Dallas counts bits 1..64 */
+    uint8_t bit_number = handle->buf.bit_idx + 1;
+    if (handle->search.val == OW_VAL_DIFF)
+    {
+      uint8_t bit_choice = 0;
+      if (bit_number < handle->search.last_discrepancy)
+      {
+        /* repeat previous path */
+        bit_choice = (handle->search.rom_id[handle->buf.bit_idx / 8] >> (handle->buf.bit_idx % 8)) & 0x01;
+      }
+      else if (bit_number == handle->search.last_discrepancy)
+      {
+        /* this time choose 1 */
+        bit_choice = 1;
+      }
+      else
+      {
+        /* choose 0 and remember as last zero */
+        bit_choice = 0;
+        handle->search.last_zero = bit_number;
+      }
+      handle->search.val = bit_choice ? OW_VAL_1 : OW_VAL_0;
+    }
+    else if (handle->search.val == OW_VAL_ERR)
+    {
+      handle->error = OW_ERR_ROM_ID;
+      ow_stop(handle);
+    }
+    break;
+
+  /************ Writing selected bit, phase 1: pull low ************/
+  case 11:
+    if (handle->search.val == OW_VAL_1)
+    {
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_LOW - 1);
+      handle->search.rom_id[handle->buf.bit_idx / 8] |= (1 << (handle->buf.bit_idx % 8));
+    }
+    else
+    {
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_HIGH - 1);
+    }
+    ow_write_bit(handle, false);
+    handle->buf.bit_ph++;
+    break;
+
+  /************ Writing selected bit, phase 2: release bus ************/
+  case 12:
+    if (handle->search.val == OW_VAL_1)
+    {
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_HIGH - 1);
+    }
+    else
+    {
+      __HAL_TIM_SET_AUTORELOAD(handle->config.tim_handle, OW_TIM_WRITE_LOW - 1);
+    }
+    ow_write_bit(handle, true);
+    handle->buf.bit_idx++;
+    if (handle->buf.bit_idx == 64)
+    {
+      /* full ROM read */
+      handle->buf.bit_idx = 0;
+      handle->buf.bit_ph = 0;
+      if (ow_crc(handle->search.rom_id, 7) == handle->search.rom_id[7])
+      {
+        /* ROM ID Filter not enabled */
+        if (handle->rom_id_filter == 0)
         {
-            /* Mix the incoming data bit with the current CRC LSB. */
-            mix = (crc ^ inbyte) & 0x01;
-            crc >>= 1;
-
-            /* Apply the Dallas/Maxim reflected CRC polynomial when needed. */
-            if (mix)
-            {
-                crc ^= 0x8C;
-            }
-
-            /* Advance to the next input bit. */
-            inbyte >>= 1;
+          memcpy(&handle->rom_id[handle->rom_id_found], handle->search.rom_id, 8);
+          handle->rom_id_found++;
         }
-    }
+        /* Selected ROM ID Filter */
+        else if (handle->rom_id_filter == handle->search.rom_id[0])
+        {
+          memcpy(&handle->rom_id[handle->rom_id_found], handle->search.rom_id, 8);
+          handle->rom_id_found++;
+        }
+      }
+      memset(handle->search.rom_id, 0, 8);
 
-    return crc;
+      /* update discrepancy */
+      handle->search.last_discrepancy = handle->search.last_zero;
+      handle->search.last_zero = 0;
+      if (handle->search.last_discrepancy == 0 || handle->rom_id_found == OW_MAX_DEVICE)
+      {
+        handle->search.last_device_flag = 1;
+        handle->state = OW_STATE_DONE;
+      }
+      else
+      {
+        /* prepare next search */
+        handle->buf.data[0] = OW_CMD_SEARCH_ROM;
+        handle->buf.bit_idx = 0;
+        handle->buf.bit_ph = 0;
+      }
+    }
+    else
+    {
+      /* next search bit */
+      handle->buf.bit_ph = 5;
+    }
+    break;
+  default:
+    break;
+  }
 }
+#endif
+
+/*************************************************************************************************/
+/**
+ * @brief Set 1-Wire bus pin high or low.
+ * @param[in] handle: Pointer to 1-Wire handle.
+ * @param[in] high: true to set high, false to set low.
+ */
+__STATIC_FORCEINLINE void ow_write_bit(ow_t *handle, bool high)
+{
+  assert_param(handle != NULL);
+
+  handle->config.gpio->BSRR = (high ? handle->config.pin_set : handle->config.pin_reset);
+}
+
+/*************************************************************************************************/
+/**
+ * @brief Read current level of 1-Wire bus pin.
+ * @param[in] handle: Pointer to 1-Wire handle.
+ * @retval 1 if high, 0 if low
+ */
+__STATIC_FORCEINLINE uint8_t ow_read_bit(ow_t *handle)
+{
+  assert_param(handle != NULL);
+
+#if (OW_DUAL_PINS == 0)
+  return ((handle->config.gpio->IDR & handle->config.pin_read) ? 1 : 0);
+#else
+#if (OW_INVERT_RX == 0)
+  return ((handle->config.gpio_rx->IDR & handle->config.pin_read) ? 1 : 0);
+#else
+  return ((handle->config.gpio_rx->IDR & handle->config.pin_read) ? 0 : 1);
+#endif
+#endif
+}
+
+/*************************************************************************************************/
+/** End of File **/
+/*************************************************************************************************/

@@ -33,7 +33,7 @@
 #include "ethernet_udp.h"
 #include <stdint.h>
 #include <stdbool.h>
-#include "onewire.h"
+//#include "ds18b20.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -127,6 +127,14 @@ static uint8_t g_flashAlwaysOnBrightness = 0;
 // UDP socket. This is independent from any incoming seq values.
 static uint32_t g_console_tx_seq = 1;
 
+// -----------------------------------------------------------------------------
+// g_ds18
+//
+// Global DS18B20 driver handle.
+// This contains the DS18B20 state and the embedded 1 Wire driver state.
+// -----------------------------------------------------------------------------
+//////static ds18b20_t g_ds18;
+
 
 /* USER CODE END PV */
 
@@ -200,6 +208,22 @@ static int jsoneq(const char *json, jsmntok_t *tok, const char *s)
 
     return -1;
 }
+
+
+// -----------------------------------------------------------------------------
+// onewire_tim_cb
+//
+// Timer callback used by the 1 Wire timing state machine inside the DS18B20
+// driver.
+// -----------------------------------------------------------------------------
+/*static void onewire_tim_cb(TIM_HandleTypeDef *htim)
+{
+    // Silence unused parameter warning.
+    (void)htim;
+
+    // Advance the 1 Wire timing state machine.
+    ow_callback(&g_ds18.ow);
+}*/
 
 
 // -----------------------------------------------------------------------------
@@ -622,6 +646,76 @@ static void pump_seriallight_monitor(EthernetUDP *udp_console)
 }
 
 
+// -----------------------------------------------------------------------------
+// ds18_setup
+//
+// Initialize the DS18B20 driver on PB0 using TIM2, then scan the bus for
+// connected DS18B20 devices.
+// -----------------------------------------------------------------------------
+/*static void ds18_setup(void)
+{
+    ow_init_t ow_init_struct;
+
+
+
+    // Fill in the 1 Wire initialization structure used by the DS18B20 driver.
+    ow_init_struct.tim_handle = &htim2;
+    ow_init_struct.tim_cb = onewire_tim_cb;
+    ow_init_struct.done_cb = NULL;
+    ow_init_struct.gpio = GPIOB;
+    ow_init_struct.pin = GPIO_PIN_0;
+    ow_init_struct.rom_id_filter = DS18B20_ID;
+
+    // Initialize the DS18B20 driver.
+    ds18b20_init(&g_ds18, &ow_init_struct);
+
+    // Scan the bus and store detected DS18B20 ROM IDs.
+    ds18b20_update_rom_id(&g_ds18);
+
+    // Wait for the ROM search operation to finish.
+    while (ds18b20_is_busy(&g_ds18))
+    {
+    }
+}
+
+// -----------------------------------------------------------------------------
+// ds18_read_temp_c
+//
+// Trigger a conversion, wait for it to complete, then read the temperature
+// from DS18B20 device index 0.
+//
+// Returns:
+//   Temperature in degrees C, using the library's integer return format.
+// -----------------------------------------------------------------------------
+static int16_t ds18_read_temp_c(void)
+{
+    // Start a temperature conversion on the bus.
+    ds18b20_cnv(&g_ds18);
+
+    // Wait for the conversion command transaction to finish.
+    while (ds18b20_is_busy(&g_ds18))
+    {
+    }
+
+    // Wait until the sensor reports that conversion is complete.
+    while (!ds18b20_is_cnv_done(&g_ds18))
+    {
+    }
+
+    // Request a scratchpad read from device 0.
+    ds18b20_req_read(&g_ds18, 0);
+
+    // Wait for the read transaction to finish.
+    while (ds18b20_is_busy(&g_ds18))
+    {
+    }
+
+    // Return the decoded Celsius temperature.
+    return ds18b20_read_c(&g_ds18);
+}
+*/
+
+
 /* USER CODE END 0 */
 
 /**
@@ -690,41 +784,17 @@ int main(void)
 
 
 
-  // Start the free running microsecond timer used by the 1 Wire driver.
-  HAL_TIM_Base_Start(&htim2);
-
-
-
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-
-  HAL_TIM_Base_Start(&htim2);
-  OneWire_t ow;
-  GPIO_PinState ow_idle_state;
-  uint8_t presence;
-
-  /* Initialize the 1 Wire bus on PB0 */
-  OneWire_Init(&ow, GPIOB, GPIO_PIN_0, &htim2);
-
-  /* Check idle state (should be high) */
-  ow_idle_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
-
-  /* Issue reset and check for presence */
-  presence = OneWire_Reset(&ow);
-
-  while (1)
-  {
-      OneWire_Reset(&ow);
-      HAL_Delay(1000);
-  }
+  //ds18_setup();
 
 
   while (1)
   {
 	  // Service the flash timer
 	  flash_update();
+
+	  //int16_t temp_c;
+
+	  //temp_c = ds18_read_temp_c();
 
 	  // this is how we toggle led light on the board
 	  /*
@@ -1355,6 +1425,10 @@ static void MX_TIM2_Init(void)
   }
   /* USER CODE BEGIN TIM2_Init 2 */
 
+  /*if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK)
+  {
+      Error_Handler();
+  }*/
   /* USER CODE END TIM2_Init 2 */
 
 }
