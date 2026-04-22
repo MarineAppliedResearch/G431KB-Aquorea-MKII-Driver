@@ -33,7 +33,7 @@
 #include "ethernet_udp.h"
 #include <stdint.h>
 #include <stdbool.h>
-#include "onewire.h"
+//////#include "onewire.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,6 +43,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+const char fw_version[] = "0.01";
+
 const char motd[] =
 "========================================================================\n"
 "  ███╗   ███╗  █████╗  ██████╗ ███████╗\n"
@@ -803,6 +805,9 @@ int main(void)
 				        	   //flash_force_high_test((uint32_t)length_ms);
 				           }
 				       }
+				   }
+				   else if (c == 'v'){
+					   outlen = snprintf(buf, sizeof(buf), "%s", fw_version);
 				   }
 
 				   // ---------- Temperature ----------
